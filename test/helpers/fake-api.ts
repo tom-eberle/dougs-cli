@@ -1,4 +1,11 @@
-import { COMPANY, type RawOpFixture, rawAccounts, rawCategories, rawUser } from './fixtures.js';
+import {
+  COMPANY,
+  type RawOpFixture,
+  rawAccounts,
+  rawCategories,
+  rawUser,
+  recoverage,
+} from './fixtures.js';
 
 export interface RecordedRequest {
   method: string;
@@ -21,6 +28,9 @@ export class FakeDougs {
   requests: RecordedRequest[] = [];
   vendorInvoices = new Map<string, unknown>();
   declarations: { summary: Record<string, unknown>; form: Record<string, unknown> | null }[] = [];
+  accountingYears = [{ id: 1, openingDate: '2025-03-01', closingDate: '2025-12-31', closed: true }];
+  /** Server-side side effects of an operation update (e.g. re-categorization side effects). */
+  onUpdate?: (previous: RawOpFixture, next: RawOpFixture) => void;
   files = new Map<string, Uint8Array>();
   session = 'synthetic-session-value';
   overrides: Handler[] = [];
@@ -69,11 +79,14 @@ export class FakeDougs {
     if (method === 'GET' && path === `${c}/accounts`) return Response.json(rawAccounts());
     if (method === 'GET' && path === `${c}/categories`) return Response.json(rawCategories());
     if (method === 'GET' && path === `${c}/accounting-years`)
-      return Response.json([
-        { id: 1, openingDate: '2025-03-01', closingDate: '2025-12-31', closed: true },
-      ]);
+      return Response.json(this.accountingYears);
     if (method === 'GET' && path === `${c}/declarations/list-declarations`)
-      return Response.json(this.declarations.map((d) => d.summary));
+      return Response.json(
+        this.declarations
+          .map((d) => ({ status: 'completed', ...d.summary }))
+          .filter((d) => d.status === (req.query.get('status') ?? 'completed'))
+          .map(({ status: _status, ...summary }) => summary),
+      );
     const decl = path.match(new RegExp(`^${c}/declarations/(\\d+)$`));
     if (method === 'GET' && decl) {
       const d = this.declarations.find((x) => String(x.summary.id) === decl[1]);
@@ -145,6 +158,25 @@ export class FakeDougs {
       const current = this.ops.get(one[1]!);
       if (!current) return notFound();
       const sent = req.body as RawOpFixture & { updatedBreakdown?: unknown };
+      // Like Dougs: locked ledgers refuse edits unless force=true (an accountant unlocking).
+      if ((current.manuallyLocked || current.lockedByDate) && req.query.get('force') !== 'true')
+        return Response.json(
+          { message: 'Locked', statusCode: 400 },
+          {
+            status: 400,
+            headers: { 'X-Message-Code': 'accountingLine.lockedByDateWithAccountingNumber' },
+          },
+        );
+      if (sent.validated && !current.validated) {
+        const invalid =
+          current.errors.length > 0 ||
+          sent.breakdowns.some((b) => !b.isCounterpart && b.categoryId === -1);
+        if (invalid)
+          return Response.json(
+            { message: 'Operation has errors', statusCode: 400 },
+            { status: 400 },
+          );
+      }
       // Like Dougs: the edit is read from `breakdowns`; updatedBreakdown is only a marker.
       const next: RawOpFixture = {
         ...current,
@@ -153,6 +185,11 @@ export class FakeDougs {
         breakdowns: structuredClone(sent.breakdowns),
       };
       for (const b of next.breakdowns) {
+        // Server-computed recoverable VAT (partially recoverable categories).
+        const rec = recoverage(b.categoryId);
+        b.vatAmountWithRecoverageRate = Math.round(b.vatAmount * rec * 100) / 100;
+        b.amountExcludingTaxesWithRecoverageRate =
+          Math.round((b.amount - b.vatAmountWithRecoverageRate) * 100) / 100;
         if (
           b.categoryId !== -1 &&
           b.vatAmount === 0 &&
@@ -160,6 +197,7 @@ export class FakeDougs {
         )
           b.associations = [...(b.associations ?? []), { name: 'vatExemptionReason', slots: {} }];
       }
+      this.onUpdate?.(current, next);
       this.ops.set(one[1]!, next);
       return Response.json(next);
     }

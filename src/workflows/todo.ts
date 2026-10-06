@@ -1,11 +1,13 @@
 import { z } from 'zod';
-import type { OperationRecord } from '../api/dougs.js';
+import type { DeclarationSummary, OperationRecord } from '../api/dougs.js';
 import { operationSchema } from '../api/schemas.js';
 import type { StepDraft } from '../plan/types.js';
 import {
   type CategoryIndex,
+  declarationRefSchema,
   type Finding,
   missingReceipt,
+  overdueDeclarations,
   SEVERITIES,
   uncategorized,
   unvalidated,
@@ -15,6 +17,7 @@ import { checkVat } from './vat.js';
 import { VendorRegistry } from './vendors.js';
 
 export const TODO_REASONS = [
+  'OVERDUE_DECLARATION',
   'MISSING_RECEIPT',
   'UNCATEGORIZED',
   'UNVALIDATED',
@@ -25,7 +28,8 @@ export type TodoReason = (typeof TODO_REASONS)[number];
 
 export const todoItemSchema = z
   .object({
-    op: operationSchema,
+    op: operationSchema.nullable().describe('null for an OVERDUE_DECLARATION item'),
+    declaration: declarationRefSchema.optional(),
     reasons: z.array(
       z.object({
         code: z.enum(TODO_REASONS),
@@ -47,13 +51,21 @@ export type TodoItem = Omit<z.infer<typeof todoItemSchema>, 'suggestion'> & {
 export interface TodoOptions {
   rules: RulesFile;
   categories?: CategoryIndex;
+  declarations?: readonly DeclarationSummary[];
+  /** Also suggest fixes backed by weak evidence (warning-level findings). */
+  includeWarnings?: boolean;
 }
 
 /** Cheap, local checks only (no document downloads) so the worklist stays fast. */
 export function buildTodo(records: readonly OperationRecord[], options: TodoOptions): TodoItem[] {
   const vendors = new VendorRegistry(options.rules.vendors);
   const policy = { noReceiptCategories: new Set(options.rules.noReceiptCategories) };
-  const items: TodoItem[] = [];
+  // Overdue returns first: they have deadlines and penalties.
+  const items: TodoItem[] = overdueDeclarations(options.declarations ?? []).map((f) => ({
+    op: null,
+    declaration: f.declaration,
+    reasons: [{ code: 'OVERDUE_DECLARATION', severity: f.severity, detail: f.detail }],
+  }));
   for (const { op } of records) {
     const reasons: TodoItem['reasons'] = [];
     const suggestion: StepDraft[] = [];
@@ -71,7 +83,7 @@ export function buildTodo(records: readonly OperationRecord[], options: TodoOpti
     add(unvalidated(op), 'UNVALIDATED');
     for (const f of checkVat(op, { vendors, categories: options.categories })) {
       add(f, 'VAT_SUSPECT');
-      if (f.fix) suggestion.push(f.fix);
+      if (f.fix && (f.severity === 'error' || options.includeWarnings)) suggestion.push(f.fix);
     }
     const outcome = evaluateRules(options.rules, op);
     const step = outcome ? ruleStep(op, outcome) : null;

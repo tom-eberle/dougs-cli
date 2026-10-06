@@ -10,6 +10,7 @@ export interface RawBreakdownFixture {
   amount: number;
   isCounterpart: boolean;
   isInbound: boolean;
+  isRefund: boolean;
   section: string;
   categoryId: number;
   resolvedCategoryId: number;
@@ -48,6 +49,9 @@ export interface RawOpFixture {
   validated: boolean;
   deleted: boolean;
   excluded: boolean;
+  manuallyLocked: boolean;
+  lockedByDate: boolean;
+  errors: unknown[];
   breakdowns: RawBreakdownFixture[];
   transaction: {
     accountId: number;
@@ -70,6 +74,8 @@ export const CATEGORIES = {
   bankFees: { id: 12, name: 'Frais bancaires', group: 'Banque', rate: null },
   sales: { id: 301, name: 'Prestations de services', group: 'Ventes', rate: 0.2 },
   equipment: { id: 205, name: 'Matériel informatique', group: 'Immobilisations', rate: 0.2 },
+  /** Partially recoverable VAT (like fuel for a passenger car). */
+  fuel: { id: 610, name: 'Carburant', group: 'Véhicules', rate: 0.2, recoverage: 0.8 },
   uncategorized: { id: -1, name: 'Non catégorisé', group: 'Divers', rate: null },
 } as const;
 type CategoryKey = keyof typeof CATEGORIES;
@@ -92,6 +98,18 @@ export interface OpOptions {
   original?: { amount: number; currency: string };
   deleted?: boolean;
   type?: string;
+  /** A refund: money back from a supplier (income on an expense category) or to a customer. */
+  refund?: boolean;
+  locked?: 'manual' | 'date';
+  errors?: unknown[];
+  /** Make the exemption reason a required (non-optional) slot, as Dougs does for some categories. */
+  requiredExemption?: boolean;
+}
+
+/** Share of VAT that is deductible for a category (1 unless partially recoverable). */
+export function recoverage(categoryId: number): number {
+  const cat = Object.values(CATEGORIES).find((c) => c.id === categoryId);
+  return cat && 'recoverage' in cat ? cat.recoverage : 1;
 }
 
 export function breakdown(
@@ -109,6 +127,7 @@ export function breakdown(
     amount,
     isCounterpart: false,
     isInbound: !!o.income,
+    isRefund: !!o.refund,
     section: 'main',
     categoryId: cat.id,
     resolvedCategoryId: cat.id,
@@ -117,17 +136,23 @@ export function breakdown(
     categoryGroup: { id: 2, name: cat.group },
     vatRate: exempt || !percent ? null : percent / 100,
     vatAmount: vat,
-    vatAmountWithRecoverageRate: vat,
+    vatAmountWithRecoverageRate: Math.round(vat * recoverage(cat.id) * 100) / 100,
     manualVatAmount: null,
     isVatAmountManuallyModified: false,
-    amountExcludingTaxesWithRecoverageRate: Math.round((amount - vat) * 100) / 100,
+    amountExcludingTaxesWithRecoverageRate:
+      Math.round((amount - Math.round(vat * recoverage(cat.id) * 100) / 100) * 100) / 100,
     associationData: o.exemption ? { vatExemptionReason: o.exemption } : {},
     // Dougs only offers the exemption slot on categorized breakdowns without VAT.
     associations:
       cat.id === -1
         ? null
         : vat === 0
-          ? [{ name: 'vatExemptionReason', slots: {} }]
+          ? [
+              {
+                name: 'vatExemptionReason',
+                slots: o.requiredExemption ? { reason: { isOptional: false } } : {},
+              },
+            ]
           : [{ name: 'supplier', slots: {} }],
   };
 }
@@ -147,6 +172,9 @@ export function rawOp(o: OpOptions = {}): RawOpFixture {
     validated: o.validated ?? true,
     deleted: !!o.deleted,
     excluded: false,
+    manuallyLocked: o.locked === 'manual',
+    lockedByDate: o.locked === 'date',
+    errors: o.errors ?? [],
     breakdowns: [breakdown(id, amount, o)],
     transaction: {
       accountId: 501,

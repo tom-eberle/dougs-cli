@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Dougs, OperationRecord } from '../api/dougs.js';
+import type { DeclarationSummary, Dougs, OperationRecord } from '../api/dougs.js';
 import type { Operation } from '../api/schemas.js';
 import { mapLimit } from '../util/concurrency.js';
 import { daysBetween } from '../util/dates.js';
@@ -10,6 +10,7 @@ import {
   type Finding,
   findingSchema,
   missingReceipt,
+  overdueDeclarations,
   uncategorized,
   unvalidated,
 } from './findings.js';
@@ -100,6 +101,7 @@ export interface CloseCheckOptions {
   to: string;
   rules: RulesFile;
   categories?: CategoryIndex;
+  declarations?: readonly DeclarationSummary[];
   documents: boolean;
   onProgress?: (done: number, total: number) => void;
 }
@@ -133,6 +135,8 @@ export async function runCloseCheck(
     if (mismatch) findings.push(mismatch);
   }
   findings.push(...findDuplicates(ops));
+  // Late returns anywhere are a closing blocker, not just those inside the year.
+  findings.push(...overdueDeclarations(options.declarations ?? []));
 
   const counts: Record<string, number> = {};
   const bySeverity = { error: 0, warning: 0, info: 0 };
@@ -145,7 +149,7 @@ export async function runCloseCheck(
     (a, b) =>
       rank[a.severity] - rank[b.severity] ||
       a.code.localeCompare(b.code) ||
-      b.op.date.localeCompare(a.op.date),
+      (b.op?.date ?? '').localeCompare(a.op?.date ?? ''),
   );
   return {
     meta: {

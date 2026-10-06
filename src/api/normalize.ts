@@ -55,6 +55,7 @@ function normalizeBreakdown(b: RawBreakdown, opInbound: boolean): Breakdown {
     isCounterpart: b.isCounterpart,
     section: b.section ?? null,
     direction: (b.isInbound ?? opInbound) ? 'income' : 'expense',
+    isRefund: b.isRefund ?? false,
     category: uncategorized
       ? null
       : { id: b.categoryId, name, path: group ? [group, name] : [name] },
@@ -62,6 +63,7 @@ function normalizeBreakdown(b: RawBreakdown, opInbound: boolean): Breakdown {
     amountExcludingVat: cents(b.amountExcludingTaxesWithRecoverageRate),
     vatRate: rateToPercent(b.vatRate),
     vatAmount: cents(b.vatAmount),
+    recoverableVat: cents(b.vatAmountWithRecoverageRate ?? b.vatAmount),
     vatExemptReason: exemptionKind(b.associationData?.vatExemptionReason),
   };
 }
@@ -107,6 +109,7 @@ export function normalizeOperation(raw: RawOperation, ctx: NormalizeContext): Op
     direction: raw.isInbound ? 'income' : 'expense',
     original: foreign,
     validated: raw.validated,
+    locked: !!(raw.manuallyLocked || raw.lockedByDate),
     memo: raw.memo || null,
     account: accountId ? { id: accountId, name: ctx.accounts?.get(accountId) ?? '' } : null,
     breakdowns,

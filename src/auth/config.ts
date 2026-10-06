@@ -49,7 +49,13 @@ export async function readConfig(env: Env = process.env): Promise<Config> {
       return { profiles: {}, activeProfile: 'default' };
     throw e;
   }
-  const parsed = configSchema.safeParse(JSON.parse(text));
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    json = undefined;
+  }
+  const parsed = configSchema.safeParse(json);
   if (!parsed.success)
     throw new DougsError('CONFIG_INVALID', `Config file is not valid: ${path}`, {
       exitCode: ExitCode.usage,

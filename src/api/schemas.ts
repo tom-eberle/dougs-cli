@@ -20,6 +20,7 @@ export const rawBreakdownSchema = z.looseObject({
   amount: z.number(),
   isCounterpart: z.boolean(),
   isInbound: z.boolean().optional(),
+  isRefund: z.boolean().optional(),
   section: z.string().optional(),
   categoryId: z.number(),
   resolvedCategoryId: z.number().optional(),
@@ -81,6 +82,9 @@ export const rawOperationSchema = z.looseObject({
   validated: z.boolean(),
   deleted: z.boolean().optional(),
   excluded: z.boolean().optional(),
+  manuallyLocked: z.boolean().optional(),
+  lockedByDate: z.boolean().optional(),
+  errors: z.array(z.unknown()).nullable().optional(),
   breakdowns: z.array(rawBreakdownSchema),
   transaction: rawTransactionSchema.nullable().optional(),
   sourceDocumentAttachments: z.array(rawAttachmentSchema).default([]),
@@ -183,6 +187,12 @@ export const rawDeclarationSummarySchema = z.looseObject({
   periodStartDate: z.string(),
   periodEndDate: z.string(),
   isFilled: z.boolean().optional(),
+  isLate: z.boolean().optional(),
+  dueDate: z.string().nullable().optional(),
+  confirmedAt: z.string().nullable().optional(),
+  filledAt: z.string().nullable().optional(),
+  disabled: z.boolean().optional(),
+  skipped: z.boolean().optional(),
 });
 
 export const rawDeclarationSchema = rawDeclarationSummarySchema.extend({
@@ -219,11 +229,17 @@ export const breakdownSchema = z.object({
   direction: z
     .enum(['expense', 'income'])
     .describe('Can differ from the operation (e.g. fees inside a payout)'),
+  isRefund: z.boolean().describe('A refund: reverses VAT of the opposite direction'),
   category: categoryRefSchema.nullable().describe('null when uncategorized (Dougs categoryId -1)'),
   amount: z.number().describe('Gross amount (TTC) in EUR'),
   amountExcludingVat: z.number().describe('Net amount (HT) in EUR'),
   vatRate: z.number().nullable().describe('Percent, e.g. 20 or 5.5; null when none'),
   vatAmount: z.number().describe('VAT in EUR'),
+  recoverableVat: z
+    .number()
+    .describe(
+      'Deductible part of the VAT (lower than vatAmount for partially recoverable categories)',
+    ),
   vatExemptReason: z
     .string()
     .nullable()
@@ -258,6 +274,9 @@ export const operationSchema = z
       .nullable()
       .describe('Native amount when the bank line was in a foreign currency'),
     validated: z.boolean(),
+    locked: z
+      .boolean()
+      .describe('Locked in Dougs (manually or by a closed period); the CLI will not edit it'),
     memo: z.string().nullable(),
     account: z.object({ id: z.string(), name: z.string() }).nullable(),
     breakdowns: z.array(breakdownSchema),

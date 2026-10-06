@@ -6,7 +6,7 @@ import { style } from '../output/style.js';
 import { applyPlan } from '../plan/apply.js';
 import { planSchema } from '../plan/types.js';
 import { contextOf } from './context.js';
-import { confirmationQuestion } from './mutate.js';
+import { confirmationQuestion, loadPeriodGuard } from './mutate.js';
 import { renderApplyReport } from './render.js';
 import { addMutationOptions, withExamples } from './shared.js';
 
@@ -50,6 +50,10 @@ export function registerApplyCommand(program: Command): void {
         .option('--force', 'Apply steps even if the operation changed since the plan was made')
         .option('--continue-on-error', 'Keep going after a failed step')
         .option(
+          '--allow-filed-periods',
+          'Allow changes to operations in months whose VAT return is filed, or in closed years',
+        )
+        .option(
           '--allow-any-path',
           'Let attach steps upload files outside the plan directory and the current directory',
         )
@@ -67,6 +71,7 @@ export function registerApplyCommand(program: Command): void {
         force?: boolean;
         continueOnError?: boolean;
         allowAnyPath?: boolean;
+        allowFiledPeriods?: boolean;
         report?: string;
       },
       cmd: Command,
@@ -75,6 +80,7 @@ export function registerApplyCommand(program: Command): void {
       const plan = await readPlan(path);
       const dougs = await ctx.dougs();
       const baseDir = dirname(resolve(path));
+      const periods = await loadPeriodGuard(dougs, o.allowFiledPeriods);
       ctx.out.info(style.dim(`Checking ${plan.steps.length} step(s) against the current state…`));
       const preview = await applyPlan(dougs, plan, {
         dryRun: true,
@@ -82,6 +88,8 @@ export function registerApplyCommand(program: Command): void {
         continueOnError: true,
         baseDir,
         allowAnyPath: o.allowAnyPath,
+        allowFiledPeriods: o.allowFiledPeriods,
+        periods,
       });
       // A plan that tries to upload a disallowed file is refused as a whole.
       const unsafe = preview.results.find((r) => r.error?.code === 'UNSAFE_ATTACHMENT');
@@ -99,6 +107,8 @@ export function registerApplyCommand(program: Command): void {
           continueOnError: o.continueOnError,
           baseDir,
           allowAnyPath: o.allowAnyPath,
+          allowFiledPeriods: o.allowFiledPeriods,
+          periods,
           onResult: (r) =>
             ctx.out.info(
               style.dim(`  ${r.step} ${r.status}${r.error ? `: ${r.error.message}` : ''}`),
@@ -108,7 +118,8 @@ export function registerApplyCommand(program: Command): void {
       if (o.report)
         await writeFile(o.report, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
       ctx.out.result(report, renderApplyReport);
-      if (report.meta.failed || report.meta.pending) ctx.exitCode = ExitCode.partial;
+      if (report.meta.failed || report.meta.pending || report.meta.conflicts)
+        ctx.exitCode = ExitCode.partial;
     },
   );
 }

@@ -124,7 +124,14 @@ export const changeSchema = z.object({
 });
 export type Change = z.infer<typeof changeSchema>;
 
-export const STEP_STATUSES = ['applied', 'planned', 'skipped', 'failed', 'pending'] as const;
+export const STEP_STATUSES = [
+  'applied',
+  'planned',
+  'skipped',
+  'conflict',
+  'failed',
+  'pending',
+] as const;
 
 export const stepResultSchema = z.object({
   step: z.string(),
@@ -146,6 +153,12 @@ export const stepResultSchema = z.object({
     })
     .optional(),
   changes: z.array(changeSchema),
+  sideEffects: z
+    .array(changeSchema)
+    .optional()
+    .describe(
+      'Changes Dougs made that the step did not ask for (seen when re-reading after the write)',
+    ),
   error: z
     .object({ code: z.string(), message: z.string(), hint: z.string().optional() })
     .optional(),
@@ -162,7 +175,11 @@ export const applyReportSchema = z
       applied: z.number(),
       planned: z.number(),
       skipped: z.number(),
+      conflicts: z
+        .number()
+        .describe('Steps not applied because the operation changed since planning'),
       failed: z.number(),
+      sideEffects: z.number().describe('Applied steps where Dougs also changed something else'),
       pending: z.number(),
       startedAt: z.string(),
       finishedAt: z.string(),

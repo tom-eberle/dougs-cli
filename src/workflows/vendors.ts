@@ -51,22 +51,28 @@ function compile(match: string): (normalizedWording: string) => boolean {
 }
 
 export class VendorRegistry {
-  private readonly entries: { vendor: Vendor; test: (w: string) => boolean }[];
+  private readonly entries: { vendor: Vendor; custom: boolean; test: (w: string) => boolean }[];
 
   /** Custom vendors take precedence over (and can override) built-in ones. */
   constructor(custom: readonly Vendor[] = [], builtin: readonly Vendor[] = BUILTIN_VENDORS) {
     const overridden = new Set(custom.map((v) => v.name.toLowerCase()));
-    this.entries = [...custom, ...builtin.filter((v) => !overridden.has(v.name.toLowerCase()))].map(
-      (vendor) => ({
-        vendor,
-        test: compile(vendor.match),
-      }),
-    );
+    this.entries = [
+      ...custom.map((vendor) => ({ vendor, custom: true })),
+      ...builtin
+        .filter((v) => !overridden.has(v.name.toLowerCase()))
+        .map((vendor) => ({ vendor, custom: false })),
+    ].map((e) => ({ ...e, test: compile(e.vendor.match) }));
   }
 
   find(wording: string): Vendor | null {
+    return this.match(wording)?.vendor ?? null;
+  }
+
+  /** The matching vendor and whether it came from the user's rules file (stronger evidence). */
+  match(wording: string): { vendor: Vendor; custom: boolean } | null {
     const normalized = normalizeText(wording);
-    return this.entries.find((e) => e.test(normalized))?.vendor ?? null;
+    const entry = this.entries.find((e) => e.test(normalized));
+    return entry ? { vendor: entry.vendor, custom: entry.custom } : null;
   }
 
   get all(): Vendor[] {

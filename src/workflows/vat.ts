@@ -2,7 +2,7 @@ import { z } from 'zod';
 import type { Dougs, OperationRecord } from '../api/dougs.js';
 import type { Breakdown, Operation, RawVendorInvoice } from '../api/schemas.js';
 import { isEuCountry } from '../pdf/extract.js';
-import { observe } from '../plan/diff.js';
+import { expectFor } from '../plan/diff.js';
 import { mapLimit } from '../util/concurrency.js';
 import { cents, FRENCH_VAT_RATES, sameCents } from '../util/money.js';
 import type { CategoryIndex, Finding, VatRule } from './findings.js';
@@ -14,6 +14,8 @@ export interface DocumentEvidence {
   zone: VendorZone | 'domestic' | 'foreign' | null;
   country?: string | null;
   vatAmount: number | null;
+  /** The document charges VAT somewhere (any VAT line above zero). */
+  chargesVat: boolean;
   reverseCharge: boolean;
   totals: number[];
   currency: string | null;
@@ -35,6 +37,7 @@ export function evidenceFromVendorInvoice(v: RawVendorInvoice): DocumentEvidence
     zone: zoneFromCountry(v.supplierCountry),
     country: v.supplierCountry ?? null,
     vatAmount: v.vatAmount ?? null,
+    chargesVat: (v.vatAmount ?? 0) > 0 && !reverseCharge,
     reverseCharge,
     totals: v.amount != null ? [v.amount] : [],
     currency: v.currency ?? null,
@@ -68,7 +71,9 @@ export async function documentEvidence(
       source: 'pdf',
       zone,
       country: foreign[0]?.country ?? null,
-      vatAmount: facts.vatAmounts.length === 1 ? facts.vatAmounts[0]! : null,
+      // Several VAT lines: keep the amount only if they agree.
+      vatAmount: new Set(facts.vatAmounts).size === 1 ? facts.vatAmounts[0]! : null,
+      chargesVat: facts.vatAmounts.some((v) => v > 0),
       reverseCharge: facts.reverseCharge,
       totals: facts.totals,
       currency: facts.currency,
@@ -103,19 +108,64 @@ const EXEMPT_LABEL: Record<VendorZone, string> = {
   'inside-eu': 'in another EU country',
 };
 
+interface SupplierAssessment {
+  zone: VendorZone | null;
+  why: string | null;
+  strong: boolean;
+  vendor: string | null;
+  source: 'vendor-invoice' | 'pdf' | 'pdf-heuristic' | 'rules-vendor' | 'builtin-vendor' | null;
+}
+
+/**
+ * Where the supplier is established, and how sure we are. The attached
+ * invoice wins over the vendor list: billing entities vary by customer region
+ * (many US SaaS vendors invoice EU businesses from an EU subsidiary).
+ */
+export function assessSupplier(
+  op: Operation,
+  ev: DocumentEvidence | null,
+  vendors: VendorRegistry,
+): SupplierAssessment {
+  const match = vendors.match(op.wording);
+  const vendor = match?.vendor.name ?? null;
+  if (ev?.zone === 'domestic')
+    return { zone: null, why: null, strong: false, vendor, source: ev.source };
+  if (ev && (ev.zone === 'inside-eu' || ev.zone === 'outside-eu')) {
+    const strong =
+      ev.source === 'vendor-invoice' ? ev.reverseCharge : ev.reverseCharge && ev.vatAmount === 0;
+    return {
+      zone: ev.zone,
+      why: `the invoice shows a supplier ${EXEMPT_LABEL[ev.zone]}${ev.country ? ` (${ev.country})` : ''}${ev.reverseCharge ? ' and reverse charge' : ''}`,
+      strong,
+      vendor,
+      source: ev.source === 'pdf' && !ev.reverseCharge ? 'pdf-heuristic' : ev.source,
+    };
+  }
+  if (match)
+    return {
+      zone: match.vendor.zone,
+      why: `${match.vendor.name} is established ${EXEMPT_LABEL[match.vendor.zone]}${match.custom ? ' (your rules file)' : ''}`,
+      strong: match.custom,
+      vendor,
+      source: match.custom ? 'rules-vendor' : 'builtin-vendor',
+    };
+  return { zone: null, why: null, strong: false, vendor, source: null };
+}
+
 /** All VAT findings for one operation. Pure: documents are fetched by the caller. */
 export function checkVat(op: Operation, ctx: VatContext): Finding[] {
   const findings: Finding[] = [];
   for (const b of op.breakdowns) {
     if (b.isCounterpart) continue;
-    const drift = cents(b.amount - (b.amountExcludingVat + b.vatAmount));
+    // HT here already includes any non-recoverable VAT, so it pairs with the recoverable part.
+    const drift = cents(b.amount - (b.amountExcludingVat + b.recoverableVat));
     if (Math.abs(drift) > 0.01)
       findings.push(
         vatFinding(
           op,
           'VAT_TOTAL_MISMATCH',
           'error',
-          `TTC ${b.amount.toFixed(2)} ≠ HT ${b.amountExcludingVat.toFixed(2)} + VAT ${b.vatAmount.toFixed(2)} (off by ${drift.toFixed(2)})`,
+          `TTC ${b.amount.toFixed(2)} ≠ HT ${b.amountExcludingVat.toFixed(2)} + VAT ${b.recoverableVat.toFixed(2)} (off by ${drift.toFixed(2)})`,
         ),
       );
     if (b.vatRate !== null && !(FRENCH_VAT_RATES as readonly number[]).includes(b.vatRate))
@@ -132,30 +182,33 @@ export function checkVat(op: Operation, ctx: VatContext): Finding[] {
   const b = mainBreakdown(op);
   if (!b) return findings;
 
-  const vendor = ctx.vendors.find(op.wording);
   const ev = ctx.evidence ?? null;
-  const zone: VendorZone | null =
-    vendor?.zone ?? (ev?.zone === 'inside-eu' || ev?.zone === 'outside-eu' ? ev.zone : null);
-  const why = vendor
-    ? `${vendor.name} is established ${EXEMPT_LABEL[vendor.zone]}`
-    : ev?.zone === 'inside-eu' || ev?.zone === 'outside-eu'
-      ? `the invoice shows a supplier ${EXEMPT_LABEL[ev.zone]}${ev.country ? ` (${ev.country})` : ''}`
-      : null;
-  const evidence = { vendor: vendor?.name ?? null, document: ev ?? null };
-  const fix = (kind: VendorZone) =>
-    b.category
-      ? {
-          op: op.id,
-          action: 'set' as const,
-          set: { vatExempt: kind },
-          expect: observe(op, b),
-          why: `${why}; reverse charge, no French VAT to deduct`,
-        }
-      : undefined;
+  const assessment = assessSupplier(op, ev, ctx.vendors);
+  const { zone, why, strong } = assessment;
+  const evidence = {
+    vendor: assessment.vendor,
+    document: ev,
+    strength: strong ? 'strong' : 'weak',
+  };
+  // Strong evidence (Dougs' reverse-charge code, an explicit reverse-charge invoice
+  // with 0 VAT, or a vendor from the user's rules) is an error with a plannable fix;
+  // anything else is a warning, and its fix is only planned with --include-warnings.
+  // The PDF VAT-number heuristic alone never produces a fix.
+  const severity = strong ? 'error' : 'warning';
+  const fix = (kind: VendorZone) => {
+    if (!b.category || assessment.source === 'pdf-heuristic') return undefined;
+    const shape = { action: 'set' as const, set: { vatExempt: kind } };
+    return {
+      op: op.id,
+      ...shape,
+      expect: expectFor(op, shape),
+      why: `${why}; reverse charge, no French VAT to deduct`,
+    };
+  };
 
   // An invoice that itself charges VAT is authoritative: the supplier billed VAT
   // (e.g. an EU company registered for French VAT), so this is not reverse charge.
-  const invoiceChargesVat = !!ev && !ev.reverseCharge && (ev.vatAmount ?? 0) > 0;
+  const invoiceChargesVat = !!ev && !ev.reverseCharge && (ev.chargesVat || (ev.vatAmount ?? 0) > 0);
   if (b.vatAmount > 0 && !invoiceChargesVat) {
     const docSaysZero = ev?.vatAmount === 0 || ev?.reverseCharge;
     if (zone && why) {
@@ -163,7 +216,7 @@ export function checkVat(op: Operation, ctx: VatContext): Finding[] {
         vatFinding(
           op,
           'REVERSE_CHARGE_SUSPECT',
-          'error',
+          severity,
           `${b.vatAmount.toFixed(2)} € of deductible French VAT booked, but ${why}`,
           {
             evidence,
@@ -178,9 +231,7 @@ export function checkVat(op: Operation, ctx: VatContext): Finding[] {
           'REVERSE_CHARGE_SUSPECT',
           'warning',
           `invoice mentions reverse charge but ${b.vatAmount.toFixed(2)} € of VAT is booked; supplier country unknown`,
-          {
-            evidence,
-          },
+          { evidence },
         ),
       );
     }
@@ -194,12 +245,15 @@ export function checkVat(op: Operation, ctx: VatContext): Finding[] {
       vatFinding(
         op,
         'REVERSE_CHARGE_SUSPECT',
-        'warning',
+        severity,
         `exempted as ${b.vatExemptReason}, but ${why}`,
-        { evidence, fix: fix(zone) },
+        {
+          evidence,
+          fix: fix(zone),
+        },
       ),
     );
-  } else if (!b.vatExemptReason && b.vatAmount === 0 && b.category) {
+  } else if (!b.vatExemptReason && b.vatAmount === 0 && b.category && !invoiceChargesVat) {
     const category = ctx.categories?.get(b.category.id);
     const expectsVat =
       zone !== null ||
@@ -209,7 +263,7 @@ export function checkVat(op: Operation, ctx: VatContext): Finding[] {
         vatFinding(
           op,
           'ZERO_VAT_NO_REASON',
-          'warning',
+          zone ? severity : 'warning',
           zone && why
             ? `no VAT and no exemption reason; ${why}`
             : `no VAT and no exemption reason, but "${b.category.name}" normally carries VAT`,
@@ -316,7 +370,20 @@ export const vatSummarySchema = z
       unvalidated: z.number(),
       uncategorized: z.number(),
       declaration: z
-        .object({ id: z.string(), label: z.string().nullable(), filed: z.boolean() })
+        .object({
+          id: z.string(),
+          label: z.string().nullable(),
+          status: z.enum(['completed', 'ready_to_complete', 'upcoming']),
+          filed: z.boolean(),
+          dueDate: z.string().nullable(),
+          isLate: z.boolean(),
+          hasForm: z
+            .boolean()
+            .describe('Dougs computed figures (filed, or a draft for open months)'),
+          corrective: z
+            .boolean()
+            .describe('Several filed returns exist for the month; the latest is used'),
+        })
         .nullable()
         .describe('The Dougs CA3 for this month, when one exists'),
     }),
@@ -324,7 +391,9 @@ export const vatSummarySchema = z
     lines: z.array(vatSummaryLineSchema),
     notes: z.array(z.string()),
   })
-  .describe('Monthly CA3 estimate, optionally side by side with the filed declaration');
+  .describe(
+    'Monthly CA3 estimate, side by side with Dougs’ figures: the filed return, or its draft for open months (`declared`)',
+  );
 export type VatSummary = z.infer<typeof vatSummarySchema>;
 
 const SELF_ASSESSED_RATE = 20;
@@ -353,21 +422,26 @@ export function estimateCa3(
   for (const op of ops) {
     for (const b of op.breakdowns) {
       if (b.isCounterpart) continue;
-      if (b.direction === 'income') {
+      // A refund reverses VAT of the opposite flow: money back from a supplier
+      // reduces deductible VAT; money back to a customer reduces collected VAT.
+      const sale = b.isRefund ? b.direction === 'expense' : b.direction === 'income';
+      const sign = b.isRefund ? -1 : 1;
+      if (sale) {
         if (b.vatAmount > 0 && b.vatRate) {
           const bucket = collected.get(b.vatRate) ?? { base: 0, vat: 0 };
-          bucket.base += b.amountExcludingVat;
-          bucket.vat += b.vatAmount;
+          bucket.base += sign * b.amountExcludingVat;
+          bucket.vat += sign * b.vatAmount;
           collected.set(b.vatRate, bucket);
-        } else if (isRevenue(b.category?.id, categories)) nonTaxable += b.amount;
+        } else if (isRevenue(b.category?.id, categories)) nonTaxable += sign * b.amount;
         continue;
       }
-      if (b.vatExemptReason === 'inside-eu') rc.eu += b.amount;
-      else if (b.vatExemptReason === 'outside-eu') rc.nonEu += b.amount;
-      else if (b.vatAmount > 0) {
+      if (b.vatExemptReason === 'inside-eu') rc.eu += sign * b.amount;
+      else if (b.vatExemptReason === 'outside-eu') rc.nonEu += sign * b.amount;
+      else if (b.recoverableVat > 0) {
+        // Only the recoverable part of the VAT is deductible.
         const account = b.category ? categories?.get(b.category.id)?.accountingNumber : null;
-        if (account?.startsWith('2')) deductibleAssets += b.vatAmount;
-        else deductibleDomestic += b.vatAmount;
+        if (account?.startsWith('2')) deductibleAssets += sign * b.recoverableVat;
+        else deductibleDomestic += sign * b.recoverableVat;
       }
     }
   }

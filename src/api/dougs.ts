@@ -1,8 +1,8 @@
-import { readFile } from 'node:fs/promises';
 import { basename } from 'node:path';
 import { z } from 'zod';
 import { DougsError, ExitCode, usageError } from '../output/errors.js';
 import { analyzeDocumentText, type DocumentFacts, extractPdfText } from '../pdf/extract.js';
+import { mimeType } from '../plan/attachments.js';
 import { type DateRange, inRange } from '../util/dates.js';
 import { includesLoose } from '../util/text.js';
 import { type Cache, DAY } from './cache.js';
@@ -27,6 +27,17 @@ import {
 } from './schemas.js';
 
 export const PAGE_SIZE = 40;
+
+export const DECLARATION_STATUSES = ['completed', 'ready_to_complete', 'upcoming'] as const;
+export type DeclarationStatus = (typeof DECLARATION_STATUSES)[number];
+export type DeclarationSummary = z.infer<typeof rawDeclarationSummarySchema> & {
+  status: DeclarationStatus;
+};
+
+/** Answers "why must this date not be edited?" (null when it may be). */
+export interface PeriodGuard {
+  reason(date: string): string | null;
+}
 
 export type ValidationStatus = 'all' | 'validated' | 'unvalidated';
 
@@ -170,16 +181,19 @@ export class Dougs {
       );
       body.updatedBreakdown = breakdown;
     }
-    await this.client.post(`${this.opPath(String(raw.id))}?force=true`, body);
+    await this.client.post(this.opPath(String(raw.id)), body);
     return this.getRaw(String(raw.id));
   }
 
-  async attachFiles(opId: string, files: { path: string; name?: string }[]): Promise<void> {
+  /** Upload documents already read and validated by the caller (see plan/attachments). */
+  async attachFiles(opId: string, files: { bytes: Uint8Array; name: string }[]): Promise<void> {
     const form = new FormData();
-    for (const file of files) {
-      const bytes = await readFile(file.path);
-      form.append('file', new Blob([bytes]), file.name ?? uploadName(file.path));
-    }
+    for (const file of files)
+      form.append(
+        'file',
+        new Blob([file.bytes as Uint8Array<ArrayBuffer>], { type: mimeType(file.name) }),
+        file.name,
+      );
     await this.client.post(
       `${this.opPath(opId)}/source-document-attachments/actions/create-from-formdata`,
       form,
@@ -258,7 +272,12 @@ export class Dougs {
     const key = `pdf-text/${att.fileId}.txt`;
     const cached = await this.cache.getText(key);
     if (cached !== undefined) return cached;
-    const text = await extractPdfText(await this.downloadAttachment(att)).catch(() => '');
+    let text: string;
+    try {
+      text = await extractPdfText(await this.downloadAttachment(att));
+    } catch {
+      return null; // not cached: a failed download or parse is retried next time
+    }
     await this.cache.setText(key, text);
     return text;
   }
@@ -276,12 +295,49 @@ export class Dougs {
     );
   }
 
-  /** Completed declarations (light summaries, no form data). */
-  async completedDeclarations(): Promise<z.infer<typeof rawDeclarationSummarySchema>[]> {
-    const raw = await this.client.get(
-      this.path('/declarations/list-declarations?status=completed&limit=200&offset=0'),
+  /**
+   * Declaration summaries for all states: `completed` (filed), `ready_to_complete`
+   * and `upcoming` (open; Dougs computes a draft form for these too).
+   */
+  async declarations(): Promise<DeclarationSummary[]> {
+    const lists = await Promise.all(
+      DECLARATION_STATUSES.map(async (status) => {
+        const raw = await this.client.get(
+          this.path(`/declarations/list-declarations?status=${status}&limit=200&offset=0`),
+        );
+        return parseOrDrift(z.array(rawDeclarationSummarySchema), raw, 'declarations').map((d) => ({
+          ...d,
+          status,
+        }));
+      }),
     );
-    return parseOrDrift(z.array(rawDeclarationSummarySchema), raw, 'declarations');
+    return lists.flat().filter((d) => !d.disabled && !d.skipped);
+  }
+
+  /**
+   * Which dates must not be edited without --allow-filed-periods: months covered
+   * by a filed CA3 (editing them desynchronizes the ledger from the return) and
+   * closed accounting years.
+   */
+  async periodGuard(): Promise<PeriodGuard> {
+    const [declarations, years] = await Promise.all([this.declarations(), this.accountingYears()]);
+    const filed = declarations.filter((d) => d.status === 'completed' && d.type.startsWith('CA3'));
+    const closed = years.filter((y) => y.closed);
+    return {
+      reason(date: string) {
+        const d = filed.find(
+          (x) => date >= x.periodStartDate.slice(0, 10) && date <= x.periodEndDate.slice(0, 10),
+        );
+        if (d)
+          return `its VAT return (${d.label ?? d.periodStartDate.slice(0, 7)}) is already filed`;
+        const y = closed.find(
+          (x) => date >= x.openingDate.slice(0, 10) && date <= x.closingDate.slice(0, 10),
+        );
+        if (y)
+          return `its accounting year (${y.openingDate.slice(0, 10)} → ${y.closingDate.slice(0, 10)}) is closed`;
+        return null;
+      },
+    };
   }
 
   async declaration(id: string): Promise<z.infer<typeof rawDeclarationSchema>> {

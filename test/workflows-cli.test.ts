@@ -67,20 +67,32 @@ describe('todo', () => {
     const plan = join(dir, 'todo.plan.json');
     const r = await runCli(api, ['todo', '--plan', plan]);
     expect(r.code).toBe(0);
-    const items = r.json() as { op: { id: string }; reasons: { code: string; rule?: string }[] }[];
+    const items = r.json() as {
+      op: { id: string } | null;
+      reasons: { code: string; rule?: string }[];
+    }[];
     const byId = Object.fromEntries(
-      items.map((i) => [i.op.id, i.reasons.map((x) => x.rule ?? x.code)]),
+      items.map((i) => [i.op?.id, i.reasons.map((x) => x.rule ?? x.code)]),
     );
     expect(byId['203']).toEqual(['REVERSE_CHARGE_SUSPECT']);
     expect(byId['205']).toEqual(['MISSING_RECEIPT', 'UNCATEGORIZED', 'UNVALIDATED']);
     expect(byId['201']).toEqual(['MISSING_RECEIPT']);
     expect(byId['204']).toBeUndefined();
-    const written = JSON.parse(readFileSync(plan, 'utf8'));
-    expect(written).toMatchObject({
+    // The only VAT fix rests on the built-in vendor list (weak evidence): not planned by default.
+    expect(JSON.parse(readFileSync(plan, 'utf8'))).toMatchObject({
       version: 1,
       company: COMPANY,
-      steps: [{ id: 's1', op: '203', action: 'set', set: { vatExempt: 'outside-eu' } }],
+      steps: [],
     });
+    await runCli(api, ['todo', '--plan', plan, '--include-warnings']);
+    expect(JSON.parse(readFileSync(plan, 'utf8')).steps).toEqual([
+      expect.objectContaining({
+        id: 's1',
+        op: '203',
+        action: 'set',
+        set: { vatExempt: 'outside-eu' },
+      }),
+    ]);
   });
 
   it('renders a grouped table in a terminal', async () => {
@@ -88,7 +100,7 @@ describe('todo', () => {
     expect(r.stdout).toContain('Missing receipt (2)');
     expect(r.stdout).toContain('VAT to check (1)');
     expect(r.stdout).toContain(
-      '3 operations need attention: 2 missing receipts · 1 uncategorized · 1 to validate · 1 VAT to check',
+      '3 items need attention: 2 missing receipts · 1 uncategorized · 1 to validate · 1 VAT to check',
     );
   });
 });
@@ -117,7 +129,14 @@ describe('vat check', () => {
         evidence?: { document?: { source: string } };
       }[];
     };
-    expect(report.meta).toMatchObject({ operations: 5, documentsChecked: 2, fixes: 2 });
+    // 202: Dougs read a US supplier with reverse-charge code AE (strong). 203: only the
+    // built-in vendor list (the PDF says reverse charge but names no country): weak.
+    expect(report.meta).toMatchObject({
+      operations: 5,
+      documentsChecked: 2,
+      fixes: 1,
+      weakFixes: 1,
+    });
     const suspects = report.findings.filter((f) => f.code === 'REVERSE_CHARGE_SUSPECT');
     expect(suspects.map((f) => [f.op.id, f.evidence?.document?.source ?? null])).toEqual([
       ['203', 'pdf'],
@@ -125,8 +144,13 @@ describe('vat check', () => {
     ]);
     const apply = await runCli(api, ['apply', plan, '--yes']);
     expect(apply.code).toBe(0);
-    expect(apply.json()).toMatchObject({ meta: { applied: 2 } });
-    const after = await runCli(api, ['vat', 'check', '--from', '2026-08-01', '--to', '2026-08-31']);
+    expect(apply.json()).toMatchObject({ meta: { applied: 1 }, results: [{ op: '202' }] });
+    const range = ['--from', '2026-08-01', '--to', '2026-08-31'];
+    await runCli(api, ['vat', 'check', ...range, '--plan', plan, '--include-warnings']);
+    expect((await runCli(api, ['apply', plan, '--yes'])).json()).toMatchObject({
+      meta: { applied: 1 },
+    });
+    const after = await runCli(api, ['vat', 'check', ...range]);
     expect((after.json() as { findings: unknown[] }).findings).toEqual([]);
   });
 });

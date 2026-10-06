@@ -1,12 +1,7 @@
-import { ExitCode } from '../output/errors.js';
-import { type ApplyOptions, applyPlan, executeStep } from '../plan/apply.js';
-import {
-  type ApplyReport,
-  buildPlan,
-  type Plan,
-  type StepDraft,
-  type StepResult,
-} from '../plan/types.js';
+import type { Dougs, PeriodGuard } from '../api/dougs.js';
+import { DougsError, ExitCode } from '../output/errors.js';
+import { type ApplyOptions, applyPlan, executeStep, reportOf } from '../plan/apply.js';
+import { type ApplyReport, buildPlan, type StepDraft } from '../plan/types.js';
 import { VERSION } from '../version.js';
 import type { Context } from './context.js';
 import { renderApplyReport } from './render.js';
@@ -16,6 +11,7 @@ export interface MutationOptions {
   yes?: boolean;
   force?: boolean;
   allowAnyPath?: boolean;
+  allowFiledPeriods?: boolean;
 }
 
 /** The confirmation question, listing every local file that would be uploaded. */
@@ -28,29 +24,28 @@ export function confirmationQuestion(preview: ApplyReport, company: string): str
   return `These local files will be uploaded to Dougs:\n${uploads.map((f) => `  ${f}`).join('\n')}\n${question}`;
 }
 
-function singleReport(
-  plan: Plan,
-  result: StepResult,
-  dryRun: boolean,
-  startedAt: string,
-): ApplyReport {
-  const is = (s: StepResult['status']) => (result.status === s ? 1 : 0);
-  return {
-    meta: {
-      company: plan.company,
-      createdBy: plan.createdBy,
-      dryRun,
-      total: 1,
-      applied: is('applied'),
-      planned: is('planned'),
-      skipped: is('skipped'),
-      failed: 0,
-      pending: 0,
-      startedAt,
-      finishedAt: new Date().toISOString(),
-    },
-    results: [result],
-  };
+/**
+ * Load which periods are closed (filed CA3, closed years). Fails closed: if
+ * Dougs cannot tell us, refuse rather than risk editing a filed period.
+ */
+export async function loadPeriodGuard(
+  dougs: Dougs,
+  allowFiledPeriods?: boolean,
+): Promise<PeriodGuard | undefined> {
+  if (allowFiledPeriods) return undefined;
+  try {
+    return await dougs.periodGuard();
+  } catch (cause) {
+    throw new DougsError(
+      'PERIODS_UNKNOWN',
+      'Could not check which periods are already filed or closed',
+      {
+        exitCode: ExitCode.network,
+        hint: 'retry, or pass --allow-filed-periods to skip this check',
+        cause,
+      },
+    );
+  }
 }
 
 /**
@@ -67,23 +62,29 @@ export async function runSteps(
   const dougs = await ctx.dougs();
   const plan = buildPlan(dougs.company, `dougs-cli ${VERSION} ${command}`, drafts);
   const single = plan.steps.length === 1 ? plan.steps[0]! : null;
-  const base: ApplyOptions = { force: options.force, allowAnyPath: options.allowAnyPath };
+  const base: ApplyOptions = {
+    force: options.force,
+    allowAnyPath: options.allowAnyPath,
+    allowFiledPeriods: options.allowFiledPeriods,
+    periods: await loadPeriodGuard(dougs, options.allowFiledPeriods),
+  };
   const run = async (dryRun: boolean): Promise<ApplyReport> => {
     const startedAt = new Date().toISOString();
     return single
-      ? singleReport(plan, await executeStep(dougs, single, { ...base, dryRun }), dryRun, startedAt)
+      ? reportOf(plan, [await executeStep(dougs, single, { ...base, dryRun })], dryRun, startedAt)
       : applyPlan(dougs, plan, { ...base, dryRun, continueOnError: dryRun });
   };
 
   const preview = await run(true);
   if (options.dryRun || preview.meta.planned === 0) {
     ctx.out.result(preview, renderApplyReport);
-    if (preview.meta.failed) ctx.exitCode = ExitCode.partial;
+    if (preview.meta.failed || preview.meta.conflicts) ctx.exitCode = ExitCode.partial;
     return;
   }
   if (ctx.out.human) ctx.out.humanError(`${renderApplyReport(preview)}\n\n`);
   await ctx.confirm(confirmationQuestion(preview, dougs.company), options.yes);
   const report = await run(false);
   ctx.out.result(report, renderApplyReport);
-  if (report.meta.failed || report.meta.pending) ctx.exitCode = ExitCode.partial;
+  if (report.meta.failed || report.meta.pending || report.meta.conflicts)
+    ctx.exitCode = ExitCode.partial;
 }

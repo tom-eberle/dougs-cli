@@ -1,9 +1,23 @@
-import { realpathSync, statSync } from 'node:fs';
+import { constants, realpathSync, statSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import { extname, isAbsolute, relative, resolve } from 'node:path';
 import { DougsError, ExitCode } from '../output/errors.js';
 
 /** File types Dougs accepts as justifying documents, and the only ones a plan may upload. */
 export const UPLOAD_EXTENSIONS = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.heic', '.webp']);
+
+const MIME_TYPES: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.heic': 'image/heic',
+  '.webp': 'image/webp',
+};
+
+export function mimeType(name: string): string {
+  return MIME_TYPES[extname(name).toLowerCase()] ?? 'application/octet-stream';
+}
 
 export interface UploadPolicy {
   /** Directory relative paths resolve against (the plan file's directory). */
@@ -61,4 +75,31 @@ export function resolveUpload(file: string, policy: UploadPolicy): string {
       'move the file next to the plan, or re-run with --allow-any-path if you trust this plan',
     );
   return real;
+}
+
+export interface Upload {
+  path: string;
+  bytes: Uint8Array;
+}
+
+/**
+ * Validate and read an upload in one go. The bytes sent are the bytes of the
+ * file that was checked: the resolved path is opened without following
+ * symlinks and must still be the same inode, so swapping the file between the
+ * check and the read (TOCTOU) fails instead of uploading something else.
+ */
+export async function readUpload(file: string, policy: UploadPolicy): Promise<Upload> {
+  const path = resolveUpload(file, policy);
+  const checked = statSync(path);
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW).catch(() => {
+    throw unsafe(`Could not open ${path} safely`);
+  });
+  try {
+    const opened = await handle.stat();
+    if (!opened.isFile() || opened.ino !== checked.ino || opened.dev !== checked.dev)
+      throw unsafe(`${path} changed while it was being checked; refusing to upload it`);
+    return { path, bytes: new Uint8Array(await handle.readFile()) };
+  } finally {
+    await handle.close();
+  }
 }

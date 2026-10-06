@@ -143,6 +143,7 @@ const STATUS_STYLE: Record<StepResult['status'], (s: string) => string> = {
   applied: style.green,
   planned: style.cyan,
   skipped: style.dim,
+  conflict: style.yellow,
   failed: style.red,
   pending: style.dim,
 };
@@ -159,8 +160,13 @@ export function renderApplyReport(report: ApplyReport): string {
       { header: 'STATUS', value: (r) => STATUS_STYLE[r.status](r.status) },
       {
         header: 'DETAIL',
-        value: (r) =>
-          r.error?.message ?? (r.changes.length ? formatChanges(r.changes) : (r.reason ?? '')),
+        value: (r) => {
+          const what = r.changes.length ? formatChanges(r.changes) : (r.reason ?? '');
+          const detail = r.error
+            ? `${r.error.message}${r.changes.length ? ` — saved: ${what}` : ''}`
+            : what;
+          return r.file && !r.error ? `${detail} (${r.file})` : detail;
+        },
         flex: true,
       },
     ],
@@ -171,14 +177,23 @@ export function renderApplyReport(report: ApplyReport): string {
     ? [
         `${m.planned} to apply`,
         `${m.skipped} skipped`,
+        m.conflicts ? style.yellow(`${m.conflicts} changed since planning`) : '',
         m.failed ? style.red(`${m.failed} failed`) : '',
       ]
     : [
         style.green(`${m.applied} applied`),
         `${m.skipped} skipped`,
+        m.conflicts ? style.yellow(`${m.conflicts} changed since planning`) : '',
         m.failed ? style.red(`${m.failed} failed`) : '',
         m.pending ? `${m.pending} not attempted` : '',
       ];
+  const effects = rows
+    .filter((r) => r.sideEffects?.length)
+    .map((r) =>
+      style.yellow(
+        `  ${r.step} op ${r.op}: Dougs also changed ${formatChanges(r.sideEffects ?? [])}`,
+      ),
+    );
   const why = rows
     .filter((r) => r.status === 'planned' || r.status === 'applied')
     .map((r) => `  ${style.dim(r.step)} ${r.why}`);
@@ -186,8 +201,42 @@ export function renderApplyReport(report: ApplyReport): string {
     table,
     '',
     parts.filter(Boolean).join(' · '),
+    ...(effects.length ? ['', style.bold(style.yellow('Side effects')), ...effects] : []),
     ...(why.length ? ['', style.bold('Why'), ...why] : []),
   ].join('\n');
+}
+
+/**
+ * ID/DATE/WORDING/AMOUNT columns for something about an operation, or about a
+ * declaration (then: its id, due date and label).
+ */
+export function subjectColumns<T>(
+  subject: (row: T) => {
+    op: Operation | null;
+    declaration?: { id: string; label: string | null; type: string; dueDate: string | null };
+  },
+): Column<T>[] {
+  return [
+    { header: 'ID', value: (r) => subject(r).op?.id ?? subject(r).declaration?.id ?? '' },
+    { header: 'DATE', value: (r) => subject(r).op?.date ?? subject(r).declaration?.dueDate ?? '' },
+    {
+      header: 'WORDING',
+      value: (r) => {
+        const s = subject(r);
+        return s.op?.wording ?? s.declaration?.label ?? s.declaration?.type ?? '';
+      },
+      flex: true,
+      max: 36,
+    },
+    {
+      header: 'AMOUNT',
+      value: (r) => {
+        const op = subject(r).op;
+        return op ? formatSigned(op.amount, op.direction) : '';
+      },
+      align: 'right',
+    },
+  ];
 }
 
 const SEVERITY_STYLE = { error: style.red, warning: style.yellow, info: style.dim };
@@ -212,14 +261,7 @@ export function renderFindings(
     blocks.push(
       renderTable(
         [
-          { header: 'ID', value: (f) => f.op.id },
-          { header: 'DATE', value: (f) => f.op.date },
-          { header: 'WORDING', value: (f) => f.op.wording, flex: true, max: 36 },
-          {
-            header: 'AMOUNT',
-            value: (f) => formatSigned(f.op.amount, f.op.direction),
-            align: 'right',
-          },
+          ...subjectColumns<Finding>((f) => f),
           ...(list.some((f) => f.fix)
             ? [{ header: 'FIX', value: (f: Finding) => (f.fix ? style.cyan('plan') : '') }]
             : []),

@@ -95,7 +95,7 @@ export async function writePlan(path: string, plan: Plan): Promise<string> {
     }),
   };
   try {
-    await writeFile(target, `${JSON.stringify(portable, null, 2)}\n`, { mode: 0o644 });
+    await writeFile(target, `${JSON.stringify(portable, null, 2)}\n`, { mode: 0o600 });
   } catch (cause) {
     throw new DougsError('WRITE_FAILED', `Could not write plan to ${path}`, {
       exitCode: ExitCode.usage,

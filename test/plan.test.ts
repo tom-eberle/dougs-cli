@@ -60,7 +60,8 @@ describe('set: category + VAT exemption', () => {
     expect(reason!.breakdowns[0]!.associationData.vatExemptionReason).toBe(
       'exemption:outbound:outsideEuropeanUnion',
     );
-    expect(posts.every((p) => p.query.get('force') === 'true')).toBe(true);
+    // Never ?force=true: that would unlock locked ledgers (see B1).
+    expect(posts.every((p) => !p.query.has('force'))).toBe(true);
     expect(toOp(api.ops.get('1')!)).toMatchObject({
       category: { id: 77 },
       vatAmount: 0,
@@ -226,7 +227,7 @@ describe('applyPlan', () => {
     ]);
     const report = await applyPlan(dougsFor(api), plan);
     expect(report.results[0]).toMatchObject({
-      status: 'skipped',
+      status: 'conflict',
       reason: expect.stringContaining('category'),
     });
     expect(api.writes).toHaveLength(0);

@@ -26,7 +26,8 @@ const MAX_CONCURRENCY = 4;
 export class ApiClient {
   readonly baseUrl: string;
   private session: string;
-  private refreshed = false;
+  /** One shared refresh for all concurrent requests (sessions rotate). */
+  private refresh?: Promise<string | null>;
   private readonly transport: Fetch;
   private readonly limiter = new Limiter(MAX_CONCURRENCY);
   private readonly sleep: (ms: number) => Promise<void>;
@@ -74,8 +75,10 @@ export class ApiClient {
     const url = this.resolve(path);
     return this.limiter.run(async () => {
       const maxRetries = method === 'GET' ? (this.options.maxRetries ?? 3) : 0;
+      let authRetried = false;
       for (let attempt = 0; ; attempt++) {
         const started = Date.now();
+        const sent = this.session;
         let response: Response;
         try {
           response = await this.transport(url, {
@@ -99,7 +102,12 @@ export class ApiClient {
         }
         this.log(`${method} ${pathOnly(path)} → ${response.status} (${Date.now() - started} ms)`);
 
-        if ((response.status === 401 || response.status === 403) && (await this.tryRefresh())) {
+        if (
+          (response.status === 401 || response.status === 403) &&
+          !authRetried &&
+          (await this.freshSession(sent))
+        ) {
+          authRetried = true;
           await response.body?.cancel();
           continue;
         }
@@ -179,21 +187,37 @@ export class ApiClient {
     };
   }
 
-  private async tryRefresh(): Promise<boolean> {
-    if (this.refreshed || !this.options.refreshSession) return false;
-    this.refreshed = true;
-    const fresh = await this.options.refreshSession().catch(() => null);
-    if (!fresh || fresh === this.session) return false;
-    this.log('session rejected; retrying with a fresh browser cookie');
-    this.session = fresh;
-    return true;
+  /**
+   * After a 401/403: is there a newer session than the one this request sent?
+   * Every concurrent caller awaits the same refresh, then retries once with it.
+   */
+  private async freshSession(sent: string): Promise<boolean> {
+    if (this.session !== sent) return true;
+    if (!this.options.refreshSession) return false;
+    this.refresh ??= this.options
+      .refreshSession()
+      .catch(() => null)
+      .then((fresh) => {
+        if (!fresh || fresh === this.session) return null;
+        this.log('session rejected; retrying with a fresh browser cookie');
+        this.session = fresh;
+        return fresh;
+      });
+    return (await this.refresh) !== null;
   }
 
   private async toError(method: HttpMethod, path: string, response: Response): Promise<DougsError> {
+    const messageCode = response.headers.get('x-message-code');
     const apiMessage = await readApiMessage(response);
     const where = `${method} ${pathOnly(path)}`;
     const detail = apiMessage ? `: ${apiMessage}` : '';
     const status = response.status;
+    if (messageCode?.startsWith('accountingLine.locked'))
+      return new DougsError('LOCKED', `Dougs refused ${where}: the accounting lines are locked`, {
+        exitCode: ExitCode.rejected,
+        hint: 'the period is locked in Dougs; unlocking is an accountant action in the web app',
+        status,
+      });
     if (status === 401)
       return new DougsError('AUTH_EXPIRED', 'Dougs session is missing or expired', {
         exitCode: ExitCode.auth,

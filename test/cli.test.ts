@@ -140,7 +140,7 @@ describe('mutations', () => {
 
   it('asks once in a terminal and cancels on "n"', async () => {
     const api = sample();
-    const r = await runCli(api, ['ops', 'validate', '102'], {
+    const r = await runCli(api, ['ops', 'set', '101', '--memo', 'checked'], {
       stdoutIsTTY: true,
       stdinIsTTY: true,
       answer: 'n',
@@ -180,7 +180,7 @@ describe('mutations', () => {
         createdAt: '2026-09-01T00:00:00.000Z',
         createdBy: 'test',
         steps: [
-          { id: 's1', op: '102', action: 'validate', why: 'reviewed' },
+          { id: 's1', op: '101', action: 'set', set: { memo: 'reviewed' }, why: 'reviewed' },
           { id: 's2', op: '424242', action: 'validate', why: 'does not exist' },
         ],
       }),

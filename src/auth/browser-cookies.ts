@@ -20,6 +20,7 @@ import type { Browser, Env } from './config.js';
 const COOKIE_NAME = 'auth_session';
 const HOSTS = ['app.dougs.fr', '.app.dougs.fr', 'dougs.fr', '.dougs.fr'];
 const CHROME_EPOCH_OFFSET_S = 11_644_473_600;
+const KEYCHAIN_TIMEOUT_MS = 15_000;
 
 interface BrowserInfo {
   macDir: string;
@@ -94,11 +95,14 @@ export const defaultCookieDeps = (): CookieReaderDeps => ({
               {
                 encoding: 'utf8',
                 stdio: ['ignore', 'pipe', 'ignore'],
+                // A keychain prompt nobody answers must not hang an agent.
+                timeout: KEYCHAIN_TIMEOUT_MS,
               },
             )
           : execFileSync('secret-tool', ['lookup', 'application', libsecretApp], {
               encoding: 'utf8',
               stdio: ['ignore', 'pipe', 'ignore'],
+              timeout: KEYCHAIN_TIMEOUT_MS,
             });
       return out.trim() || null;
     } catch {

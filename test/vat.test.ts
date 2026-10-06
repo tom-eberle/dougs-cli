@@ -31,6 +31,7 @@ function evidence(partial: Partial<DocumentEvidence>): DocumentEvidence {
     source: 'vendor-invoice',
     zone: null,
     vatAmount: null,
+    chargesVat: false,
     reverseCharge: false,
     totals: [],
     currency: 'EUR',
@@ -39,19 +40,19 @@ function evidence(partial: Partial<DocumentEvidence>): DocumentEvidence {
 }
 
 describe('vat check rules', () => {
-  it('flags a known foreign supplier booked with deductible French VAT, with a fix step', () => {
+  it('flags a built-in foreign vendor booked with French VAT as a warning (weak evidence)', () => {
     const cloud = op({ id: 1, wording: 'CLOUDFLARE', amount: 24, vatRate: 20 });
     const [finding] = checkVat(cloud, { vendors, categories });
     expect(finding).toMatchObject({
       code: 'REVERSE_CHARGE_SUSPECT',
-      severity: 'error',
+      severity: 'warning',
       detail:
         '4.00 € of deductible French VAT booked, but Cloudflare is established outside the EU',
       fix: {
         op: '1',
         action: 'set',
         set: { vatExempt: 'outside-eu' },
-        expect: { vatAmount: 4, category: 77 },
+        expect: { vatAmount: 4, category: 77, vatRate: 20, vatExemptReason: null },
       },
     });
   });
@@ -90,6 +91,7 @@ describe('vat check rules', () => {
   it('flags TTC ≠ HT + VAT and non-French rates', () => {
     const raw = rawOp({ amount: 100 });
     raw.breakdowns[0]!.vatAmount = 10;
+    raw.breakdowns[0]!.vatAmountWithRecoverageRate = 10;
     raw.breakdowns[0]!.vatRate = 0.19;
     expect(codes(toOp(raw))).toEqual(['VAT_TOTAL_MISMATCH', 'VAT_RATE_INVALID']);
   });

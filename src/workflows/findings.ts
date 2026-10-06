@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { DeclarationSummary } from '../api/dougs.js';
 import { type Category, type Operation, operationSchema } from '../api/schemas.js';
 import {
   attachStepSchema,
@@ -19,6 +20,7 @@ export const FINDING_CODES = [
   'RULE_MATCH',
   'POSSIBLE_DUPLICATE',
   'DOCUMENT_AMOUNT_MISMATCH',
+  'OVERDUE_DECLARATION',
 ] as const;
 export type FindingCode = (typeof FINDING_CODES)[number];
 
@@ -45,7 +47,8 @@ export const findingSchema = z.object({
   code: z.enum([...FINDING_CODES, ...VAT_RULES]),
   severity: z.enum(SEVERITIES),
   detail: z.string(),
-  op: operationSchema,
+  op: operationSchema.nullable().describe('null for findings about a declaration'),
+  declaration: z.lazy(() => declarationRefSchema).optional(),
   evidence: z.record(z.string(), z.unknown()).optional(),
   fix: draftSchema.optional().describe('Suggested plan step, when the fix is unambiguous'),
   related: z.array(z.string()).optional().describe('Other operation ids involved (duplicates)'),
@@ -54,6 +57,50 @@ export type Finding = Omit<z.infer<typeof findingSchema>, 'code' | 'fix'> & {
   code: FindingCode | VatRule;
   fix?: StepDraft;
 };
+
+export const declarationRefSchema = z
+  .object({
+    id: z.string(),
+    type: z.string().describe('e.g. CA3-2026 (monthly VAT return)'),
+    label: z.string().nullable(),
+    periodStart: z.string(),
+    periodEnd: z.string(),
+    dueDate: z.string().nullable(),
+    isLate: z.boolean(),
+    status: z.enum(['completed', 'ready_to_complete', 'upcoming']),
+  })
+  .describe('A Dougs declaration (tax return)');
+export type DeclarationRef = z.infer<typeof declarationRefSchema>;
+
+export function declarationRef(d: DeclarationSummary): DeclarationRef {
+  return {
+    id: String(d.id),
+    type: d.type,
+    label: d.label ?? null,
+    periodStart: d.periodStartDate.slice(0, 10),
+    periodEnd: d.periodEndDate.slice(0, 10),
+    dueDate: d.dueDate ? d.dueDate.slice(0, 10) : null,
+    isLate: !!d.isLate,
+    status: d.status,
+  };
+}
+
+/** Declarations Dougs marks as late and that are not filed yet. */
+export function overdueDeclarations(declarations: readonly DeclarationSummary[]): Finding[] {
+  return declarations
+    .filter((d) => d.status !== 'completed' && d.isLate)
+    .sort((a, b) => a.periodStartDate.localeCompare(b.periodStartDate))
+    .map((d) => {
+      const ref = declarationRef(d);
+      return {
+        code: 'OVERDUE_DECLARATION' as const,
+        severity: 'error' as const,
+        detail: `${ref.label ?? ref.type}: not filed, overdue since ${ref.dueDate ?? 'its due date'}`,
+        op: null,
+        declaration: ref,
+      };
+    });
+}
 
 /** Receipts above this gross amount must be a full invoice, not a till receipt. */
 export const INVOICE_THRESHOLD = 150;

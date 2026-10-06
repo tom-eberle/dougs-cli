@@ -49,9 +49,9 @@ describe('scoreMatch', () => {
     );
   });
 
-  it('allows ±2 % for currency-converted totals', () => {
+  it('does not compare a foreign-currency total with the EUR amount (N3)', () => {
     const s = scoreMatch(doc({ name: 'c.pdf', totals: [48.9], currency: 'USD' }), nimbus);
-    expect(s.amount).toBe(0.6);
+    expect(s.amount).toBe(0);
   });
 
   it('rejects dates outside −10/+40 days and wrong amounts', () => {

@@ -161,7 +161,7 @@ describe('todo and close-check helpers', () => {
       ],
       { rules },
     );
-    expect(items.map((i) => i.op.id)).toEqual(['1', '2']);
+    expect(items.map((i) => i.op?.id)).toEqual(['1', '2']);
     expect(items[0]!.reasons.map((r) => r.code)).toEqual([
       'MISSING_RECEIPT',
       'UNVALIDATED',
@@ -201,7 +201,7 @@ describe('todo and close-check helpers', () => {
       op({ id: 3, date: '2026-08-20', wording: 'CB ORBIT TOOLS', amount: 19.99 }),
       op({ id: 4, date: '2026-08-02', wording: 'CB ORBIT TOOLS', amount: 19.99, income: true }),
     ]);
-    expect(dupes.map((d) => [d.op.id, d.related, d.severity])).toEqual([['2', ['1'], 'info']]);
+    expect(dupes.map((d) => [d.op?.id, d.related, d.severity])).toEqual([['2', ['1'], 'info']]);
     const twin = findDuplicates([
       op({ id: 5, date: '2026-08-01', wording: 'CB ORBIT TOOLS', amount: 9 }),
       op({ id: 6, date: '2026-08-01', wording: 'CB ORBIT TOOLS', amount: 9 }),
@@ -217,6 +217,7 @@ describe('todo and close-check helpers', () => {
       source: 'pdf' as const,
       zone: null,
       vatAmount: null,
+      chargesVat: false,
       reverseCharge: false,
       totals,
       currency,

@@ -6,7 +6,7 @@ import { VAT_EXEMPT_KINDS } from '../api/schemas.js';
 import { usageError } from '../output/errors.js';
 import { style } from '../output/style.js';
 import { resolveUpload } from '../plan/attachments.js';
-import { observe } from '../plan/diff.js';
+import { expectFor } from '../plan/diff.js';
 import { type SetChanges, type StepDraft, setChangesSchema } from '../plan/types.js';
 import { FRENCH_VAT_RATES } from '../util/money.js';
 import { plural } from '../util/text.js';
@@ -195,7 +195,11 @@ export function registerOpsCommands(program: Command): void {
         )
         .option('--memo <text>', 'Set the memo ("" to clear)')
         .option('--breakdown <id>', 'Breakdown to edit (split operations only)')
-        .option('--force', 'Apply even if the operation changed since it was read'),
+        .option('--force', 'Apply even if the operation changed since it was read')
+        .option(
+          '--allow-filed-periods',
+          'Allow edits in months whose VAT return is filed, or closed years',
+        ),
     ),
     'ops set 10001 --category 77 --vat-exempt outside-eu --dry-run',
     'ops set 10001 10002 --vat-rate 20 --yes',
@@ -212,6 +216,7 @@ export function registerOpsCommands(program: Command): void {
         dryRun?: boolean;
         yes?: boolean;
         force?: boolean;
+        allowFiledPeriods?: boolean;
       },
       cmd: Command,
     ) => {
@@ -236,12 +241,15 @@ export function registerOpsCommands(program: Command): void {
       const drafts: StepDraft[] = [];
       for (const id of ids) {
         const { op } = await dougs.getOperation(id);
-        drafts.push({
-          op: id,
-          action: 'set',
+        const shape = {
+          action: 'set' as const,
           set,
           ...(o.breakdown ? { breakdown: o.breakdown } : {}),
-          expect: observe(op),
+        };
+        drafts.push({
+          op: id,
+          ...shape,
+          expect: expectFor(op, shape),
           why: 'requested on the command line',
         });
       }
@@ -313,17 +321,24 @@ export function registerOpsCommands(program: Command): void {
     addMutationOptions(
       ops
         .command('validate <ids...>')
-        .description('Mark operations as validated (as the web app does)'),
+        .description('Mark operations as validated (refused if Dougs would show errors)')
+        .option('--allow-filed-periods', 'Allow validation in months whose VAT return is filed'),
     ),
     'ops validate 10001 10002 --yes',
-  ).action(async (ids: string[], o: { dryRun?: boolean; yes?: boolean }, cmd: Command) => {
-    const drafts: StepDraft[] = ids.map((op) => ({
-      op,
-      action: 'validate',
-      why: 'requested on the command line',
-    }));
-    await runSteps(contextOf(cmd), 'ops validate', drafts, o);
-  });
+  ).action(
+    async (
+      ids: string[],
+      o: { dryRun?: boolean; yes?: boolean; allowFiledPeriods?: boolean },
+      cmd: Command,
+    ) => {
+      const drafts: StepDraft[] = ids.map((op) => ({
+        op,
+        action: 'validate',
+        why: 'requested on the command line',
+      }));
+      await runSteps(contextOf(cmd), 'ops validate', drafts, o);
+    },
+  );
 
   withExamples(
     ops

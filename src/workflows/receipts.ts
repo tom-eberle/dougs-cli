@@ -16,8 +16,6 @@ export const RECEIPT_EXTENSIONS = UPLOAD_EXTENSIONS;
 
 /** Window, in days, of an operation date relative to the document date. */
 export const DATE_WINDOW = { before: 10, after: 40 } as const;
-const FX_TOLERANCE = 0.02;
-
 export interface ReceiptDocument {
   path: string;
   name: string;
@@ -105,14 +103,8 @@ function amountScore(
           score: 0.85,
           reason: `amount ${value.toFixed(2)} = ${label} (not on a total line)`,
         };
-  // A foreign-currency invoice paid from a EUR account: allow FX drift.
-  if (doc.currency && doc.currency !== 'EUR')
-    for (const value of candidates)
-      if (op.amount > 0 && Math.abs(value - op.amount) / op.amount <= FX_TOLERANCE)
-        return {
-          score: 0.6,
-          reason: `amount ${value.toFixed(2)} ${doc.currency} ≈ ${op.amount.toFixed(2)} EUR (±2 %)`,
-        };
+  // Foreign-currency documents only match the bank's original amount (above):
+  // comparing them with the EUR amount would need the exchange rate.
   return { score: 0, reason: null };
 }
 
@@ -225,12 +217,7 @@ export function matchReceipts(
   const steps: StepDraft[] = [];
   const claimed = new Map<string, string>();
   for (const doc of docs) {
-    const display = uploadName(doc.name);
-    const attachedTo = ops.find((op) => op.attachments.some((a) => a.filename === display));
-    if (attachedTo) {
-      report.alreadyAttached.push({ file: doc.path, op: attachedTo.id });
-      continue;
-    }
+    const display = uploadName(doc.name).normalize('NFC');
     const ranked = ops
       .map((op) => ({ op, score: scoreMatch(doc, op) }))
       .filter((c) => c.score.amount > 0 && c.score.total >= 0.4)
@@ -246,6 +233,15 @@ export function matchReceipts(
       score: score.total,
       why: `${score.reasons.join(', ')} (score ${score.total.toFixed(2)})`,
     });
+    // Only "already attached" when a matching candidate carries this file name:
+    // common names (invoice.pdf) on unrelated operations must not hide a match.
+    const attachedTo = ranked.find(({ op }) =>
+      op.attachments.some((a) => a.filename.normalize('NFC') === display),
+    );
+    if (attachedTo) {
+      report.alreadyAttached.push({ file: doc.path, op: attachedTo.op.id });
+      continue;
+    }
     const best = ranked[0];
     if (!best) {
       report.unmatched.push({

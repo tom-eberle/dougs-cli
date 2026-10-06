@@ -59,8 +59,11 @@ export function setFieldSatisfied(
 /** True when the operation already is in the state the step asks for. */
 export function isSatisfied(op: Operation, step: PlanStep): boolean {
   switch (step.action) {
-    case 'attach':
-      return op.attachments.some((a) => a.filename === (step.name ?? uploadName(step.file)));
+    case 'attach': {
+      // Compare in NFC: macOS file names are often NFD, Dougs may store either form.
+      const name = (step.name ?? uploadName(step.file)).normalize('NFC');
+      return op.attachments.some((a) => a.filename.normalize('NFC') === name);
+    }
     case 'detach':
       return !op.attachments.some((a) => a.id === step.attachmentId);
     case 'validate':
@@ -86,6 +89,93 @@ export function observe(op: Operation, breakdown?: Breakdown): Required<Expectat
     validated: op.validated,
     attachments: op.attachments.length,
   };
+}
+
+/** What a step changes, as the subset of `observe()` fields it depends on. */
+type StepShape =
+  | { action: 'set'; set: SetChanges; breakdown?: string }
+  | { action: 'attach' | 'detach' | 'validate' };
+
+/**
+ * The expectation to store in a plan step: only the fields the step touches,
+ * so an unrelated change (a receipt attached, the operation validated) does not
+ * void the step. A set step always records the category, which VAT fixes rely on.
+ */
+export function expectFor(op: Operation, step: StepShape): Expectation {
+  const b = step.action === 'set' ? targetBreakdown(op, step) : undefined;
+  const all = observe(op, b);
+  switch (step.action) {
+    case 'validate':
+      return { validated: all.validated };
+    case 'attach':
+    case 'detach':
+      return {};
+    case 'set': {
+      const e: Expectation = { category: all.category };
+      if (step.set.vatRate !== undefined || step.set.vatExempt !== undefined) {
+        e.vatRate = all.vatRate;
+        e.vatAmount = all.vatAmount;
+        e.vatExemptReason = all.vatExemptReason;
+      }
+      if (step.set.memo !== undefined) e.memo = all.memo;
+      return e;
+    }
+  }
+}
+
+/** A flat, comparable picture of everything a write could touch. */
+export function snapshot(op: Operation): Record<string, unknown> {
+  const s: Record<string, unknown> = {
+    validated: op.validated,
+    memo: op.memo,
+    attachments: op.attachments.map((a) => a.filename.normalize('NFC')).sort(),
+  };
+  for (const b of op.breakdowns) {
+    const k = `breakdown ${b.id}`;
+    s[`${k} category`] = b.category?.id ?? -1;
+    s[`${k} amount`] = b.amount;
+    s[`${k} vatRate`] = b.vatRate;
+    s[`${k} vatAmount`] = b.vatAmount;
+    s[`${k} vatExemptReason`] = b.vatExemptReason;
+  }
+  return s;
+}
+
+/** Snapshot keys a step is expected to change. */
+export function expectedKeys(op: Operation, step: PlanStep): Set<string> {
+  switch (step.action) {
+    case 'attach':
+    case 'detach':
+      return new Set(['attachments']);
+    case 'validate':
+      return new Set(['validated']);
+    case 'set': {
+      const k = `breakdown ${targetBreakdown(op, step).id}`;
+      const keys = new Set<string>();
+      if (step.set.category !== undefined) keys.add(`${k} category`);
+      if (step.set.vatRate !== undefined || step.set.vatExempt !== undefined)
+        for (const f of ['vatRate', 'vatAmount', 'vatExemptReason']) keys.add(`${k} ${f}`);
+      if (step.set.memo !== undefined) keys.add('memo');
+      return keys;
+    }
+  }
+}
+
+/** Differences between two snapshots, optionally ignoring some keys. */
+export function snapshotDiff(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+  ignore: ReadonlySet<string> = new Set(),
+): Change[] {
+  const keys = new Set([...Object.keys(before), ...Object.keys(after)]);
+  const changes: Change[] = [];
+  for (const key of keys) {
+    if (ignore.has(key)) continue;
+    const a = before[key] ?? null;
+    const b = after[key] ?? null;
+    if (JSON.stringify(a) !== JSON.stringify(b)) changes.push({ field: key, from: a, to: b });
+  }
+  return changes;
 }
 
 /**

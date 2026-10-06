@@ -1,13 +1,13 @@
 import { existsSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import type { Command } from 'commander';
-import type { Dougs } from '../api/dougs.js';
+import type { DeclarationSummary, Dougs, OperationRecord } from '../api/dougs.js';
 import { DougsError, ExitCode, usageError } from '../output/errors.js';
 import { style } from '../output/style.js';
 import { renderTable } from '../output/table.js';
 import { buildPlan, type StepDraft } from '../plan/types.js';
 import { addDays, parseMonthOption, previousMonth, today } from '../util/dates.js';
-import { formatAmount, formatSigned } from '../util/money.js';
+import { formatAmount } from '../util/money.js';
 import { plural } from '../util/text.js';
 import { VERSION } from '../version.js';
 import { runCloseCheck } from '../workflows/close-check.js';
@@ -22,8 +22,9 @@ import {
 } from '../workflows/vat.js';
 import { VendorRegistry } from '../workflows/vendors.js';
 import { type Context, contextOf } from './context.js';
+import { loadPeriodGuard } from './mutate.js';
 import { addListFilters, fetchOperations, filterFromOptions } from './ops.js';
-import { renderFindings } from './render.js';
+import { renderFindings, subjectColumns } from './render.js';
 import {
   addDocumentsOption,
   addPlanOption,
@@ -61,6 +62,59 @@ function progress(ctx: Context, label: string) {
   };
 }
 
+/** Options shared by every command that writes fix plans. */
+function addPlanSafetyOptions(command: Command): Command {
+  return command
+    .option(
+      '--include-warnings',
+      'Also plan fixes backed by weaker evidence (warning-level findings)',
+    )
+    .option(
+      '--allow-filed-periods',
+      'Also plan edits in months whose VAT return is filed, or in closed years',
+    );
+}
+
+/**
+ * Keep plan steps that are safe to write: set/validate steps on operations in
+ * a filed VAT period or a closed year are held back (and counted) unless allowed.
+ */
+async function withoutFiledPeriods(
+  ctx: Context,
+  dougs: Dougs,
+  steps: StepDraft[],
+  dates: ReadonlyMap<string, string>,
+  allow?: boolean,
+): Promise<{ steps: StepDraft[]; heldBack: number }> {
+  if (allow || !steps.some((s) => s.action === 'set' || s.action === 'validate'))
+    return { steps, heldBack: 0 };
+  const guard = await loadPeriodGuard(dougs);
+  const kept = steps.filter((s) => {
+    if (s.action !== 'set' && s.action !== 'validate') return true;
+    const date = dates.get(s.op);
+    return !date || !guard?.reason(date);
+  });
+  const heldBack = steps.length - kept.length;
+  if (heldBack)
+    ctx.out.warn(
+      `${heldBack} fix(es) left out: the operations are in filed VAT periods or closed years (--allow-filed-periods to include them)`,
+    );
+  return { steps: kept, heldBack };
+}
+
+function datesOf(records: readonly OperationRecord[]): Map<string, string> {
+  return new Map(records.map((r) => [r.op.id, r.op.date]));
+}
+
+async function declarationsOrEmpty(ctx: Context, dougs: Dougs): Promise<DeclarationSummary[]> {
+  try {
+    return await dougs.declarations();
+  } catch (e) {
+    ctx.out.warn(`could not list declarations (${(e as Error).message})`);
+    return [];
+  }
+}
+
 async function maybeWritePlan(
   dougs: Dougs,
   path: string | undefined,
@@ -72,12 +126,32 @@ async function maybeWritePlan(
   return path;
 }
 
+/**
+ * The CA3 for a month: the latest filed return (corrective returns supersede
+ * the original), else the open one with Dougs' draft.
+ */
+export function pickCa3(
+  declarations: readonly DeclarationSummary[],
+  month: string,
+): DeclarationSummary | undefined {
+  const forMonth = declarations.filter(
+    (d) => d.type.startsWith('CA3') && d.periodStartDate.startsWith(month),
+  );
+  const filed = forMonth
+    .filter((d) => d.status === 'completed')
+    .sort((a, b) =>
+      (b.confirmedAt ?? b.filledAt ?? '').localeCompare(a.confirmedAt ?? a.filledAt ?? ''),
+    );
+  return filed[0] ?? forMonth[0];
+}
+
 const REASON_TITLES: Record<string, string> = {
   MISSING_RECEIPT: 'Missing receipt',
   UNCATEGORIZED: 'Uncategorized',
   UNVALIDATED: 'Waiting for validation',
   VAT_SUSPECT: 'VAT to check',
   RULE_MATCH: 'A local rule would change it',
+  OVERDUE_DECLARATION: 'Overdue declarations',
   POSSIBLE_DUPLICATE: 'Possible duplicates',
   DOCUMENT_AMOUNT_MISMATCH: 'Document amount differs',
   VAT_TOTAL_MISMATCH: 'TTC ≠ HT + VAT',
@@ -88,6 +162,7 @@ const REASON_TITLES: Record<string, string> = {
 };
 
 const TODO_SUMMARY: Record<(typeof TODO_REASONS)[number], string> = {
+  OVERDUE_DECLARATION: 'overdue declarations',
   MISSING_RECEIPT: 'missing receipts',
   UNCATEGORIZED: 'uncategorized',
   UNVALIDATED: 'to validate',
@@ -113,14 +188,7 @@ function renderTodo(items: readonly TodoItem[]): string {
     blocks.push(
       renderTable(
         [
-          { header: 'ID', value: (i: TodoItem) => i.op.id },
-          { header: 'DATE', value: (i: TodoItem) => i.op.date },
-          { header: 'WORDING', value: (i: TodoItem) => i.op.wording, flex: true, max: 36 },
-          {
-            header: 'AMOUNT',
-            value: (i: TodoItem) => formatSigned(i.op.amount, i.op.direction),
-            align: 'right',
-          },
+          ...subjectColumns<TodoItem>((i) => i),
           {
             header: 'DETAIL',
             value: (i: TodoItem) => {
@@ -141,9 +209,7 @@ function renderTodo(items: readonly TodoItem[]): string {
   const summary = TODO_REASONS.filter((r) => counts[r]).map(
     (r) => `${counts[r]} ${TODO_SUMMARY[r]}`,
   );
-  blocks.push(
-    style.dim(`${plural(items.length, 'operation')} need attention: ${summary.join(' · ')}`),
-  );
+  blocks.push(style.dim(`${plural(items.length, 'item')} need attention: ${summary.join(' · ')}`));
   if (items.some((i) => i.suggestion))
     blocks.push(
       style.dim(
@@ -153,8 +219,18 @@ function renderTodo(items: readonly TodoItem[]): string {
   return blocks.join('\n');
 }
 
+function declarationStatusText(d: NonNullable<VatSummary['meta']['declaration']>): string {
+  if (d.filed) return `filed${d.corrective ? ' (corrected: latest return used)' : ''}`;
+  const due = d.dueDate ? ` since ${d.dueDate}` : '';
+  return d.isLate
+    ? `not filed, overdue${due}`
+    : `not filed yet${d.dueDate ? `, due ${d.dueDate}` : ''}`;
+}
+
 function renderSummary(s: VatSummary): string {
-  const declared = s.meta.declaration?.filed;
+  const decl = s.meta.declaration;
+  const compare = !!decl?.hasForm;
+  const column = decl?.filed ? 'FILED' : 'DOUGS DRAFT';
   const header = [
     style.bold(`CA3 estimate for ${s.meta.month}`),
     style.dim(
@@ -163,22 +239,22 @@ function renderSummary(s: VatSummary): string {
     '',
   ];
   const lines = s.lines.filter((l) => (l.estimate ?? 0) !== 0 || (l.declared ?? 0) !== 0);
+  type Line = VatSummary['lines'][number];
   const table = renderTable(
     [
-      { header: 'BOX', value: (l: VatSummary['lines'][number]) => l.box },
+      { header: 'BOX', value: (l: Line) => l.box },
       { header: 'LABEL', value: (l) => l.label, flex: true, max: 60 },
       { header: 'ESTIMATE', value: (l) => formatAmount(l.estimate), align: 'right' },
-      ...(declared
+      ...(compare
         ? [
             {
-              header: 'DECLARED',
-              value: (l: VatSummary['lines'][number]) =>
-                l.declared === null ? '—' : String(l.declared),
+              header: column,
+              value: (l: Line) => (l.declared === null ? '—' : String(l.declared)),
               align: 'right' as const,
             },
             {
               header: 'DIFF',
-              value: (l: VatSummary['lines'][number]) =>
+              value: (l: Line) =>
                 l.difference === null
                   ? ''
                   : Math.abs(l.difference) > 1
@@ -191,29 +267,36 @@ function renderSummary(s: VatSummary): string {
     ],
     lines,
   );
-  const decl = s.meta.declaration;
-  const footer = decl
-    ? decl.filed
-      ? style.dim(`Compared with Dougs declaration "${decl.label ?? decl.id}" (whole euros).`)
-      : style.dim(
-          `Dougs declaration "${decl.label ?? decl.id}" is not filed yet; no figures to compare.`,
-        )
-    : style.dim('No Dougs CA3 declaration found for this month.');
-  return [...header, table, '', footer, ...s.notes.map((n) => style.dim(`• ${n}`))].join('\n');
+  const status = decl
+    ? `${decl.label ?? `CA3 ${s.meta.month}`}: ${declarationStatusText(decl)}`
+    : 'No Dougs CA3 declaration exists for this month.';
+  const statusLine = decl?.isLate && !decl.filed ? style.red(status) : style.dim(status);
+  const source = compare
+    ? style.dim(
+        decl?.filed
+          ? 'Compared with the filed return (whole euros).'
+          : 'Compared with Dougs’ draft for this open month (whole euros).',
+      )
+    : '';
+  return [...header, table, '', statusLine, source, ...s.notes.map((n) => style.dim(`• ${n}`))]
+    .filter((l) => l !== '')
+    .join('\n');
 }
 
 export function registerWorkflowCommands(program: Command): void {
   // ── todo ────────────────────────────────────────────────────────────
   withExamples(
-    addPlanOption(
-      addRangeOptions(
-        program
-          .command('todo')
-          .description('The morning worklist: everything that needs a human or an agent'),
-      )
-        .option('--limit <n>', 'Maximum number of items (newest first)', parsePositiveInt, 50)
-        .option('--all', 'Return every item')
-        .addOption(rulesOption()),
+    addPlanSafetyOptions(
+      addPlanOption(
+        addRangeOptions(
+          program
+            .command('todo')
+            .description('The morning worklist: everything that needs a human or an agent'),
+        )
+          .option('--limit <n>', 'Maximum number of items (newest first)', parsePositiveInt, 50)
+          .option('--all', 'Return every item')
+          .addOption(rulesOption()),
+      ),
     ),
     'todo',
     'todo --from 2026-07-01 --limit 100 --json',
@@ -227,29 +310,41 @@ export function registerWorkflowCommands(program: Command): void {
         all?: boolean;
         rules?: string;
         plan?: string;
+        includeWarnings?: boolean;
+        allowFiledPeriods?: boolean;
       },
       cmd: Command,
     ) => {
       const ctx = contextOf(cmd);
       const { rules } = await loadRules(o.rules);
       const dougs = await ctx.dougs();
-      const [records, categories] = await Promise.all([
+      const [records, categories, declarations] = await Promise.all([
         fetchOperations(ctx, { ...rangeOf(o) }),
         categoriesOrNull(ctx, dougs),
+        declarationsOrEmpty(ctx, dougs),
       ]);
-      const all = buildTodo(records, { rules, categories });
+      const all = buildTodo(records, {
+        rules,
+        categories,
+        declarations,
+        includeWarnings: o.includeWarnings,
+      });
       const items = o.all ? all : all.slice(0, o.limit);
       if (items.length < all.length)
         ctx.out.info(
           style.dim(`Showing ${items.length} of ${all.length} items (use --all or --limit)`),
         );
-      await maybeWritePlan(
-        dougs,
-        o.plan,
-        'todo',
-        items.flatMap((i) => i.suggestion ?? []),
-      );
-      if (o.plan) ctx.out.info(`wrote fixes to ${o.plan}; ${PLAN_NEXT_STEP(o.plan)}`);
+      if (o.plan) {
+        const { steps } = await withoutFiledPeriods(
+          ctx,
+          dougs,
+          items.flatMap((i) => i.suggestion ?? []),
+          datesOf(records),
+          o.allowFiledPeriods,
+        );
+        await maybeWritePlan(dougs, o.plan, 'todo', steps);
+        ctx.out.info(`wrote ${steps.length} fix(es) to ${o.plan}; ${PLAN_NEXT_STEP(o.plan)}`);
+      }
       ctx.out.result(items, renderTodo);
     },
   );
@@ -258,22 +353,32 @@ export function registerWorkflowCommands(program: Command): void {
   const vat = program.command('vat').description('VAT audit and monthly CA3 preview');
 
   withExamples(
-    addPlanOption(
-      addDocumentsOption(
-        addRangeOptions(
-          vat
-            .command('check')
-            .description('Audit VAT: arithmetic, rates, reverse charge, exemptions, invoice VAT'),
-          ' (default: last 90 days)',
-        ),
-      ).addOption(rulesOption()),
+    addPlanSafetyOptions(
+      addPlanOption(
+        addDocumentsOption(
+          addRangeOptions(
+            vat
+              .command('check')
+              .description('Audit VAT: arithmetic, rates, reverse charge, exemptions, invoice VAT'),
+            ' (default: last 90 days)',
+          ),
+        ).addOption(rulesOption()),
+      ),
     ),
     'vat check --from 2026-07-01 --to 2026-08-31',
     'vat check --from 2026-01-01 --plan vat.plan.json',
     'vat check --no-documents --json',
   ).action(
     async (
-      o: { from?: string; to?: string; documents: boolean; plan?: string; rules?: string },
+      o: {
+        from?: string;
+        to?: string;
+        documents: boolean;
+        plan?: string;
+        rules?: string;
+        includeWarnings?: boolean;
+        allowFiledPeriods?: boolean;
+      },
       cmd: Command,
     ) => {
       const ctx = contextOf(cmd);
@@ -295,8 +400,14 @@ export function registerWorkflowCommands(program: Command): void {
         vendors: new VendorRegistry(rules.vendors),
         onProgress: progress(ctx, 'documents'),
       });
-      const fixes = findings.filter((f) => f.fix).map((f) => f.fix!);
-      const unique = [...new Map(fixes.map((f) => [`${f.op}`, f])).values()];
+      // Plans hold strong-evidence fixes only, unless --include-warnings.
+      const fixes = findings
+        .filter((f) => f.fix && (f.severity === 'error' || o.includeWarnings))
+        .map((f) => f.fix!);
+      const candidates = [...new Map(fixes.map((f) => [`${f.op}`, f])).values()];
+      const { steps: unique, heldBack } = o.plan
+        ? await withoutFiledPeriods(ctx, dougs, candidates, datesOf(records), o.allowFiledPeriods)
+        : { steps: candidates, heldBack: 0 };
       const planPath = await maybeWritePlan(dougs, o.plan, 'vat check', unique);
       const counts: Record<string, number> = {};
       for (const f of findings) counts[f.code] = (counts[f.code] ?? 0) + 1;
@@ -308,6 +419,8 @@ export function registerWorkflowCommands(program: Command): void {
           documentsChecked,
           counts,
           fixes: unique.length,
+          weakFixes: findings.filter((f) => f.fix && f.severity !== 'error').length,
+          heldBackFiledPeriods: heldBack,
           plan: planPath,
         },
         findings,
@@ -323,9 +436,14 @@ export function registerWorkflowCommands(program: Command): void {
             ? `${style.green('✓')} wrote ${r.meta.fixes} fix(es) to ${r.meta.plan}; ${PLAN_NEXT_STEP(r.meta.plan)}`
             : r.meta.fixes
               ? style.dim(
-                  `${r.meta.fixes} unambiguous fix(es) available: re-run with --plan vat.plan.json`,
+                  `${r.meta.fixes} fix(es) backed by strong evidence: re-run with --plan vat.plan.json`,
                 )
               : '',
+          r.meta.weakFixes && !o.includeWarnings
+            ? style.dim(
+                `${r.meta.weakFixes} weaker fix(es) not planned; add --include-warnings after reviewing them`,
+              )
+            : '',
         ]
           .filter((l) => l !== '')
           .join('\n'),
@@ -349,15 +467,10 @@ export function registerWorkflowCommands(program: Command): void {
     const [records, categories, declarations] = await Promise.all([
       fetchOperations(ctx, range),
       categoriesOrNull(ctx, dougs),
-      dougs.completedDeclarations().catch((e: Error) => {
-        ctx.out.warn(`could not list declarations (${e.message})`);
-        return [];
-      }),
+      declarationsOrEmpty(ctx, dougs),
     ]);
-    const ca3 = (month: string) =>
-      declarations.find((d) => d.type.startsWith('CA3') && d.periodStartDate.startsWith(month));
-    const current = ca3(o.month);
-    const previous = ca3(previousMonth(o.month));
+    const current = pickCa3(declarations, o.month);
+    const previous = pickCa3(declarations, previousMonth(o.month));
     const [currentForm, previousForm] = await Promise.all([
       current ? dougs.declaration(String(current.id)).then((d) => d.form ?? null) : null,
       previous ? dougs.declaration(String(previous.id)).then((d) => d.form ?? null) : null,
@@ -368,12 +481,22 @@ export function registerWorkflowCommands(program: Command): void {
     const { boxes, byRate } = estimateCa3(ops, categories, previousCredit);
     const notes = [
       'Reverse-charge purchases are self-assessed at 20 % (services); adjust if some were goods or reduced-rate.',
-      'Box 22 (credit carried forward) comes from the previous month’s filed declaration, when available.',
     ];
-    if (!previousForm)
+    if (previousCredit === null)
       notes.push(
-        'Previous month’s declaration not found: box 22 is unknown and left out of box 23.',
+        'Previous month’s return has no figures: box 22 (credit carried forward) is unknown and left out of box 23.',
       );
+    else if (previous?.status !== 'completed')
+      notes.push('Box 22 comes from the previous month’s draft (not filed): provisional.');
+    else
+      notes.push('Box 22 (credit carried forward) comes from the previous month’s filed return.');
+    const corrective =
+      declarations.filter(
+        (d) =>
+          d.status === 'completed' &&
+          d.type.startsWith('CA3') &&
+          d.periodStartDate.startsWith(o.month),
+      ).length > 1;
     const summary: VatSummary = {
       meta: {
         month: o.month,
@@ -384,7 +507,16 @@ export function registerWorkflowCommands(program: Command): void {
           op.breakdowns.some((b) => !b.isCounterpart && !b.category),
         ).length,
         declaration: current
-          ? { id: String(current.id), label: current.label ?? null, filed: !!currentForm }
+          ? {
+              id: String(current.id),
+              label: current.label ?? null,
+              status: current.status,
+              filed: current.status === 'completed',
+              dueDate: current.dueDate ? current.dueDate.slice(0, 10) : null,
+              isLate: !!current.isLate && current.status !== 'completed',
+              hasForm: !!currentForm,
+              corrective,
+            }
           : null,
       },
       collectedByRate: byRate,
@@ -400,25 +532,30 @@ export function registerWorkflowCommands(program: Command): void {
     .description(`Local, versionable categorisation rules (${DEFAULT_RULES_FILE})`);
 
   withExamples(
-    addPlanOption(
-      addListFilters(
-        rulesCmd
-          .command('apply')
-          .description(
-            'Plan the changes your rules would make (only operations that differ get a step)',
-          ),
-      )
-        .addOption(rulesOption())
-        .option('--unvalidated-only', 'Same as --unvalidated'),
+    addPlanSafetyOptions(
+      addPlanOption(
+        addListFilters(
+          rulesCmd
+            .command('apply')
+            .description(
+              'Plan the changes your rules would make (only operations that differ get a step)',
+            ),
+        )
+          .addOption(rulesOption())
+          .option('--unvalidated-only', 'Only operations waiting for validation (the default)')
+          .option('--include-validated', 'Also operations already validated in Dougs'),
+      ),
     ),
-    'rules apply --unvalidated-only --plan rules.plan.json',
+    'rules apply --plan rules.plan.json',
     'rules apply --rules ./config/dougs.rules.json --from 2026-01-01 --json',
   ).action(
     async (
       o: Parameters<typeof filterFromOptions>[0] & {
         rules?: string;
         unvalidatedOnly?: boolean;
+        includeValidated?: boolean;
         plan?: string;
+        allowFiledPeriods?: boolean;
       },
       cmd: Command,
     ) => {
@@ -431,14 +568,24 @@ export function registerWorkflowCommands(program: Command): void {
           { exitCode: ExitCode.usage, hint: 'create one with: dougs rules init' },
         );
       if (!rules.rules.length) throw usageError(`${path} has no rules`);
+      // Default to operations still waiting for validation: booked history is
+      // only touched on request (--include-validated or --validated).
       const filter = filterFromOptions({
         ...o,
-        unvalidated: o.unvalidated || o.unvalidatedOnly,
+        unvalidated: o.unvalidated || o.unvalidatedOnly || (!o.validated && !o.includeValidated),
         limit: undefined,
       });
       const records = await fetchOperations(ctx, filter);
       const result = planRules(rules, records);
       const dougs = await ctx.dougs();
+      const { steps, heldBack } = await withoutFiledPeriods(
+        ctx,
+        dougs,
+        result.steps,
+        datesOf(records),
+        o.allowFiledPeriods,
+      );
+      result.steps = steps;
       const planPath = await maybeWritePlan(dougs, o.plan, 'rules apply', result.steps);
       const report = {
         meta: {
@@ -448,6 +595,7 @@ export function registerWorkflowCommands(program: Command): void {
           compliant: result.compliant,
           steps: result.steps.length,
           blocked: result.blocked.length,
+          heldBackFiledPeriods: heldBack,
           plan: planPath,
         },
         steps: result.steps,
@@ -576,9 +724,10 @@ export function registerWorkflowCommands(program: Command): void {
       ),
     );
     const { rules } = await loadRules(o.rules);
-    const [records, categories] = await Promise.all([
+    const [records, categories, declarations] = await Promise.all([
       fetchOperations(ctx, { from, to }),
       categoriesOrNull(ctx, dougs),
+      declarationsOrEmpty(ctx, dougs),
     ]);
     const report = await runCloseCheck(dougs, records, {
       year: o.year,
@@ -586,6 +735,7 @@ export function registerWorkflowCommands(program: Command): void {
       to,
       rules,
       categories,
+      declarations,
       documents: o.documents,
       onProgress: progress(ctx, 'documents'),
     });
