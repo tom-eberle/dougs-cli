@@ -120,6 +120,12 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
   of `todo` (with `op: null` and a `declaration`) and findings in `close-check`.
 - **`rules apply` defaults to unvalidated operations**; `--include-validated` or `--validated`
   widen it. Filed-period protection applies on top.
+- **`receipts match` targets undocumented operations** by default (`--include-attached` widens):
+  on real data almost every proposal onto an operation that already had a document was a second
+  copy (invoice vs receipt). Files are the same document when the name or the invoice/receipt
+  number matches. `<opId>_name` files are pinned to that operation. A date in the file name is
+  the document's date (text dates such as billing periods are ignored then) and only scores
+  within −5/+10 days, so the next month's charge of a recurring subscription cannot win.
 - **`receipts download`** skips a file that already exists with a non-zero size (the API does not
   expose remote sizes without downloading).
 - **Rules: first match wins**; only fields that differ produce a plan step. `rules init` keeps

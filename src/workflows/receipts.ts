@@ -14,8 +14,14 @@ import { merchantTokens, normalizeText } from '../util/text.js';
 /** Same allow-list as uploads: a matched file must be attachable. */
 export const RECEIPT_EXTENSIONS = UPLOAD_EXTENSIONS;
 
-/** Window, in days, of an operation date relative to the document date. */
+/** Window, in days, of an operation date relative to a date read from the document text. */
 export const DATE_WINDOW = { before: 10, after: 40 } as const;
+/**
+ * Tighter window for a date in the file name: it is the document's own date
+ * (invoices exported as "vendor-2026-07-20.pdf"), so a month off is another
+ * billing period, not the same document.
+ */
+export const FILENAME_DATE_WINDOW = { before: 5, after: 10 } as const;
 export interface ReceiptDocument {
   path: string;
   name: string;
@@ -24,8 +30,42 @@ export interface ReceiptDocument {
   totals: number[];
   amounts: number[];
   dates: string[];
+  /** Where `dates` came from: the file name wins over dates found in the text. */
+  dateSource: 'filename' | 'text' | null;
   currency: string | null;
   extracted: boolean;
+}
+
+/**
+ * Identity of a document across naming variants: "Invoice-1234-5678.pdf" and
+ * "Receipt-1234-5678.pdf" (or a "<opId>_" prefix) are the same document. Null
+ * when the name carries no number to identify it.
+ */
+export function documentKey(name: string): string | null {
+  const key = uploadName(name)
+    .normalize('NFC')
+    .toLowerCase()
+    .replace(/\.[a-z0-9]+$/, '')
+    .replace(/[^a-z0-9ç]+/g, '-')
+    .replace(/(^|-)(invoice|receipt|facture|re[cç]u|bill|quittance)s?(?=-|$)/g, '$1')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return /\d/.test(key) ? key : null;
+}
+
+/** The operation already carries this document (same name, or same invoice/receipt number). */
+export function hasDocument(op: Operation, name: string): boolean {
+  const display = uploadName(name).normalize('NFC');
+  const key = documentKey(name);
+  return op.attachments.some(
+    (a) =>
+      a.filename.normalize('NFC') === display || (key !== null && documentKey(a.filename) === key),
+  );
+}
+
+/** Operation id from the "<opId>_filename" convention used by receipts download. */
+export function prefixedOpId(name: string): string | null {
+  return /^(\d+)_/.exec(basename(name))?.[1] ?? null;
 }
 
 /** Expand files and directories (recursively) into receipt files. */
@@ -69,7 +109,10 @@ export async function readReceipt(path: string): Promise<ReceiptDocument> {
     text: normalizeText(`${name} ${text}`),
     totals: facts.totals.length ? facts.totals : fromName.amounts,
     amounts: [...new Set([...facts.amounts, ...fromName.amounts])],
-    dates: [...new Set([...fromName.dates, ...facts.dates])],
+    // A date in the file name is the document's date; text dates (periods, due
+    // dates) are only used when the name has none.
+    dates: fromName.dates.length ? fromName.dates : facts.dates,
+    dateSource: fromName.dates.length ? 'filename' : facts.dates.length ? 'text' : null,
     currency: facts.currency,
     extracted: text.trim().length > 0,
   };
@@ -110,20 +153,22 @@ function amountScore(
 
 function dateScore(doc: ReceiptDocument, op: Operation): { score: number; reason: string | null } {
   if (!doc.dates.length) return { score: 0.4, reason: null };
+  const window = doc.dateSource === 'filename' ? FILENAME_DATE_WINDOW : DATE_WINDOW;
   let best: { score: number; delta: number } | null = null;
   for (const date of doc.dates) {
     const delta = daysBetween(date, op.date);
-    if (delta < -DATE_WINDOW.before || delta > DATE_WINDOW.after) continue;
+    if (delta < -window.before || delta > window.after) continue;
     const score =
       delta === 0
         ? 1
         : delta > 0
-          ? 1 - delta / (DATE_WINDOW.after * 1.5)
-          : 1 - -delta / (DATE_WINDOW.before * 1.5);
+          ? 1 - delta / (window.after * 1.5)
+          : 1 - -delta / (window.before * 1.5);
     if (!best || score > best.score) best = { score, delta };
   }
   if (!best) return { score: 0, reason: null };
-  return { score: best.score, reason: `date ${best.delta >= 0 ? '+' : ''}${best.delta}d` };
+  const source = doc.dateSource === 'filename' ? ' (file name)' : '';
+  return { score: best.score, reason: `date ${best.delta >= 0 ? '+' : ''}${best.delta}d${source}` };
 }
 
 function vendorScore(
@@ -174,6 +219,11 @@ export const receiptsReportSchema = z
       ambiguous: z.number(),
       unmatched: z.number(),
       alreadyAttached: z.number(),
+      alreadyDocumented: z
+        .number()
+        .describe(
+          'Files whose matching operation already has another document (skipped by default)',
+        ),
       minScore: z.number(),
       plan: z.string().nullable(),
     }),
@@ -191,6 +241,14 @@ export const receiptsReportSchema = z
       }),
     ),
     alreadyAttached: z.array(z.object({ file: z.string(), op: z.string() })),
+    alreadyDocumented: z.array(
+      z.object({
+        file: z.string(),
+        op: z.string(),
+        existing: z.array(z.string()),
+        score: z.number(),
+      }),
+    ),
   })
   .describe('Result of dougs receipts match');
 export type ReceiptsReport = z.infer<typeof receiptsReportSchema>;
@@ -200,6 +258,10 @@ export interface MatchOptions {
   minScore: number;
   /** Required gap between the best and second-best candidate to be confident. */
   margin?: number;
+  /** Also propose operations that already have a document (default: only those without). */
+  includeAttached?: boolean;
+  /** Operations named by a file's "<opId>_" prefix (that exist in Dougs). */
+  byId?: ReadonlyMap<string, Operation>;
 }
 
 export function matchReceipts(
@@ -213,11 +275,54 @@ export function matchReceipts(
     ambiguous: [],
     unmatched: [],
     alreadyAttached: [],
+    alreadyDocumented: [],
   };
   const steps: StepDraft[] = [];
   const claimed = new Map<string, string>();
+  const attach = (
+    doc: ReceiptDocument,
+    op: Operation,
+    candidate: Candidate,
+    runnersUp: Candidate[],
+  ) => {
+    claimed.set(op.id, doc.path);
+    report.matched.push({ file: doc.path, best: candidate, runnersUp });
+    steps.push({ op: op.id, action: 'attach', file: doc.path, why: candidate.why });
+  };
+  const documented = (doc: ReceiptDocument, op: Operation, score: number) =>
+    report.alreadyDocumented.push({
+      file: doc.path,
+      op: op.id,
+      existing: op.attachments.map((a) => a.filename),
+      score,
+    });
+
   for (const doc of docs) {
-    const display = uploadName(doc.name).normalize('NFC');
+    // "<opId>_name" (what receipts download writes) names its operation: that
+    // operation or nothing, never another one.
+    const pinnedId = prefixedOpId(doc.name);
+    const pinned = pinnedId ? options.byId?.get(pinnedId) : undefined;
+    if (pinned) {
+      if (hasDocument(pinned, doc.name))
+        report.alreadyAttached.push({ file: doc.path, op: pinned.id });
+      else if (pinned.attachments.length && !options.includeAttached) documented(doc, pinned, 1);
+      else
+        attach(
+          doc,
+          pinned,
+          {
+            op: pinned.id,
+            date: pinned.date,
+            wording: pinned.wording,
+            amount: pinned.amount,
+            score: 1,
+            why: `file name prefix is operation ${pinned.id} (score 1.00)`,
+          },
+          [],
+        );
+      continue;
+    }
+
     const ranked = ops
       .map((op) => ({ op, score: scoreMatch(doc, op) }))
       .filter((c) => c.score.amount > 0 && c.score.total >= 0.4)
@@ -233,16 +338,29 @@ export function matchReceipts(
       score: score.total,
       why: `${score.reasons.join(', ')} (score ${score.total.toFixed(2)})`,
     });
-    // Only "already attached" when a matching candidate carries this file name:
-    // common names (invoice.pdf) on unrelated operations must not hide a match.
-    const attachedTo = ranked.find(({ op }) =>
-      op.attachments.some((a) => a.filename.normalize('NFC') === display),
-    );
+    // Same document (name, or invoice/receipt number) already on a matching candidate.
+    // Only candidates count: common names on unrelated operations must not hide a match.
+    const attachedTo = ranked.find(({ op }) => hasDocument(op, doc.name));
     if (attachedTo) {
       report.alreadyAttached.push({ file: doc.path, op: attachedTo.op.id });
       continue;
     }
-    const best = ranked[0];
+    // By default only operations still missing a document are targets.
+    const eligible = options.includeAttached
+      ? ranked
+      : ranked.filter(({ op }) => !op.attachments.length);
+    const top = ranked[0];
+    if (
+      !options.includeAttached &&
+      top?.op.attachments.length &&
+      top.score.total >= options.minScore &&
+      (!eligible[0] || eligible[0].score.total < top.score.total)
+    ) {
+      // The best match already has a document: almost always a second copy of it.
+      documented(doc, top.op, top.score.total);
+      continue;
+    }
+    const best = eligible[0];
     if (!best) {
       report.unmatched.push({
         file: doc.path,
@@ -254,18 +372,18 @@ export function matchReceipts(
       });
       continue;
     }
-    const second = ranked[1];
+    const second = eligible[1];
     const confident =
       best.score.total >= options.minScore &&
       (!second || best.score.total - second.score.total >= margin);
     if (!confident) {
       report.ambiguous.push({
         file: doc.path,
-        candidates: ranked.slice(0, 3).map(toCandidate),
+        candidates: eligible.slice(0, 3).map(toCandidate),
         reason:
           best.score.total < options.minScore
             ? `best score ${best.score.total.toFixed(2)} is below --min-score ${options.minScore}`
-            : `${ranked.length} operations score within ${margin} of each other`,
+            : `${eligible.length} operations score within ${margin} of each other`,
       });
       continue;
     }
@@ -278,18 +396,7 @@ export function matchReceipts(
       });
       continue;
     }
-    claimed.set(best.op.id, doc.path);
-    report.matched.push({
-      file: doc.path,
-      best: toCandidate(best),
-      runnersUp: ranked.slice(1, 3).map(toCandidate),
-    });
-    steps.push({
-      op: best.op.id,
-      action: 'attach',
-      file: doc.path,
-      why: toCandidate(best).why,
-    });
+    attach(doc, best.op, toCandidate(best), eligible.slice(1, 3).map(toCandidate));
   }
   return { report, steps };
 }

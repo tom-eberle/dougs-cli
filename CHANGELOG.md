@@ -4,6 +4,14 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- `receipts match` only targets operations without a document by default (`--include-attached`
+  to widen) and reports how many files it excluded; invoice/receipt files with the same number
+  count as the same document; `<opId>_name` files go to that operation or are skipped; a date in
+  the file name decides the billing period, so a month-off charge no longer scores 1.00.
+
 ## [0.1.0] — 2026-10-06
 
 First release, **experimental**: the write path is guarded and tested against a model of the

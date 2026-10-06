@@ -548,6 +548,7 @@ describe('N items', () => {
       totals: [48],
       amounts: [48],
       dates: ['2026-08-02'],
+      dateSource: 'text',
       currency: 'EUR',
       extracted: true,
     };

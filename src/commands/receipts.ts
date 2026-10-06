@@ -1,5 +1,6 @@
 import { basename } from 'node:path';
 import type { Command } from 'commander';
+import type { Operation } from '../api/schemas.js';
 import { DougsError, ExitCode } from '../output/errors.js';
 import { style } from '../output/style.js';
 import { renderTable } from '../output/table.js';
@@ -12,6 +13,7 @@ import {
   collectFiles,
   DATE_WINDOW,
   matchReceipts,
+  prefixedOpId,
   type ReceiptsReport,
   readReceipt,
 } from '../workflows/receipts.js';
@@ -66,7 +68,13 @@ function renderReport(r: ReceiptsReport): string {
     out.push('');
   }
   if (r.alreadyAttached.length)
-    out.push(style.dim(`${r.alreadyAttached.length} already attached (same file name), skipped`));
+    out.push(style.dim(`${r.alreadyAttached.length} already attached (same document), skipped`));
+  if (r.alreadyDocumented.length)
+    out.push(
+      style.yellow(
+        `${r.alreadyDocumented.length} excluded: the matching operation already has a document (--include-attached to consider them)`,
+      ),
+    );
   out.push(
     r.meta.plan
       ? `${style.green('✓')} wrote ${r.matched.length} attach step(s) to ${r.meta.plan}; ${PLAN_NEXT_STEP(r.meta.plan)}`
@@ -112,6 +120,10 @@ export function registerReceiptsCommands(program: Command): void {
             'Confidence needed to propose an attachment (0–1)',
             parseNumber,
             0.8,
+          )
+          .option(
+            '--include-attached',
+            'Also propose operations that already have a document (default: only those missing one)',
           ),
         ' (default: around the documents’ dates)',
       ),
@@ -122,7 +134,7 @@ export function registerReceiptsCommands(program: Command): void {
   ).action(
     async (
       paths: string[],
-      o: { from?: string; to?: string; minScore: number; plan?: string },
+      o: { from?: string; to?: string; minScore: number; plan?: string; includeAttached?: boolean },
       cmd: Command,
     ) => {
       const ctx = contextOf(cmd);
@@ -150,14 +162,30 @@ export function registerReceiptsCommands(program: Command): void {
         (dates.length ? addDays(dates[0]!, -DATE_WINDOW.before) : addDays(today(), -365));
       const to = range.to ?? (dates.length ? addDays(dates.at(-1)!, DATE_WINDOW.after) : undefined);
       const records = await fetchOperations(ctx, { from, to });
-      const { report, steps } = matchReceipts(
-        docs,
-        records.map((r) => r.op),
-        { minScore: o.minScore },
-      );
+      const ops = records.map((r) => r.op);
+      // Files named "<opId>_…" (as receipts download writes them) point at their operation,
+      // even outside the date window. Prefixes that are not operations are ignored.
+      const known = new Map(ops.map((op) => [op.id, op]));
+      const dougs = await ctx.dougs();
+      const byId = new Map<string, Operation>();
+      for (const id of new Set(
+        docs.map((d) => prefixedOpId(d.name)).filter((x): x is string => !!x),
+      )) {
+        const op =
+          known.get(id) ??
+          (await dougs.getOperation(id).then(
+            (r) => r.op,
+            () => undefined,
+          ));
+        if (op) byId.set(id, op);
+      }
+      const { report, steps } = matchReceipts(docs, ops, {
+        minScore: o.minScore,
+        includeAttached: o.includeAttached,
+        byId,
+      });
       let planPath: string | null = null;
       if (o.plan) {
-        const dougs = await ctx.dougs();
         planPath = await writePlan(
           o.plan,
           buildPlan(dougs.company, `dougs-cli ${VERSION} receipts match`, steps),
@@ -170,11 +198,17 @@ export function registerReceiptsCommands(program: Command): void {
           ambiguous: report.ambiguous.length,
           unmatched: report.unmatched.length,
           alreadyAttached: report.alreadyAttached.length,
+          alreadyDocumented: report.alreadyDocumented.length,
           minScore: o.minScore,
           plan: planPath ? (o.plan ?? null) : null,
         },
         ...report,
       };
+      // In JSON mode the human summary isn't printed: say what the plan left out on stderr.
+      if (planPath && !ctx.out.human)
+        ctx.out.info(
+          `wrote ${steps.length} attach step(s) to ${o.plan}; ${report.alreadyDocumented.length} excluded because the operation already has a document`,
+        );
       ctx.out.result(full, renderReport);
     },
   );

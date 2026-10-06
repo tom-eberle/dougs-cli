@@ -379,3 +379,48 @@ describe('resources', () => {
     ]);
   });
 });
+
+describe('receipts match (real-use fixes, end to end)', () => {
+  it('skips documented operations, looks up <opId>_ files, and says what it excluded', async () => {
+    const api = new FakeDougs([
+      rawOp({
+        id: 501,
+        date: '2026-08-02',
+        wording: 'PRLV NIMBUS HOSTING',
+        amount: 48,
+        attachments: [{ name: 'nimbus-invoice.pdf' }],
+      }),
+      rawOp({ id: 502, date: '2025-11-03', wording: 'OLD FICTIONAL SUPPLIER', amount: 75 }),
+    ]);
+    const dir = tempHome();
+    const inbox = join(dir, 'inbox');
+    mkdirSync(inbox);
+    writeFileSync(
+      join(inbox, 'nimbus-copy.pdf'),
+      makePdf(['NIMBUS HOSTING', 'Date 2026-08-02', 'Total 48,00 EUR']),
+    );
+    // Far outside the date window of the other document: found through its id prefix.
+    writeFileSync(
+      join(inbox, '502_old-supplier.pdf'),
+      makePdf(['OLD FICTIONAL SUPPLIER', 'Total 75,00 EUR']),
+    );
+    const plan = join(dir, 'receipts.plan.json');
+    const r = await runCli(api, ['receipts', 'match', inbox, '--plan', plan, '--no-color'], {
+      stdoutIsTTY: true,
+    });
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain(
+      '1 excluded: the matching operation already has a document (--include-attached to consider them)',
+    );
+    expect(JSON.parse(readFileSync(plan, 'utf8')).steps).toEqual([
+      expect.objectContaining({
+        op: '502',
+        action: 'attach',
+        file: './inbox/502_old-supplier.pdf',
+      }),
+    ]);
+    const json = await runCli(api, ['receipts', 'match', inbox, '--plan', plan]);
+    expect(json.json()).toMatchObject({ meta: { matched: 1, alreadyDocumented: 1 } });
+    expect(json.stderr).toContain('1 excluded because the operation already has a document');
+  });
+});

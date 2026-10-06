@@ -174,7 +174,9 @@ did not ask for.
   [{ rate, base, vat }], lines: [{ box, label, estimate, declared, difference }], notes }` —
   `declared` is the filed figure, or Dougs' draft for an open month.
 - `receipts-match`: `{ meta, matched: [{ file, best, runnersUp }], ambiguous: [{ file,
-  candidates, reason }], unmatched: [{ file, reason, detected }], alreadyAttached: [{ file, op }] }`.
+  candidates, reason }], unmatched: [{ file, reason, detected }], alreadyAttached: [{ file, op }],
+  alreadyDocumented: [{ file, op, existing, score }] }` — `alreadyDocumented` lists files whose
+  best match already has another document (excluded unless `--include-attached`).
 - `close-check`: `{ meta: { year, from, to, operations, documentsChecked, counts, bySeverity },
   findings: finding[] }`.
 - `rules`: the rules file (`dougs schema rules`).

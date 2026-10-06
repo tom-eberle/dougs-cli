@@ -117,9 +117,13 @@ dougs receipts match ./inbox --plan receipts.plan.json   # confident matches onl
 dougs apply receipts.plan.json
 ```
 
-Ambiguous and unmatched files are listed separately with their candidates. Files already
-attached to the operation (same name) are skipped, and a leading `<digits>_` is stripped from the
-name Dougs displays. Scanned PDFs and images without a text layer are matched by file name only
+Only operations **without** a document are targets by default (`--include-attached` to widen);
+files whose best match already has a document are reported as excluded. A file already attached
+(same name, or the same invoice/receipt number, e.g. `Invoice-0042.pdf` vs `Receipt-0042.pdf`) is
+skipped. A file named `<opId>_name.pdf` — what `receipts download` writes — goes to that
+operation or is skipped, never anywhere else; the prefix is stripped from the name Dougs shows. A
+date in the file name is taken as the document's date and must be within a few days of the
+operation. Ambiguous and unmatched files are listed separately with their candidates. Scanned PDFs and images without a text layer are matched by file name only
 (e.g. `2026-08-02_nimbus_48.00.pdf`).
 
 ### Audit VAT — `dougs vat check`

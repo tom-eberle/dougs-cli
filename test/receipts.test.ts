@@ -1,8 +1,18 @@
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { normalizeOperation } from '../src/api/normalize.js';
 import { rawOperationSchema } from '../src/api/schemas.js';
-import { matchReceipts, type ReceiptDocument, scoreMatch } from '../src/workflows/receipts.js';
+import {
+  documentKey,
+  matchReceipts,
+  type ReceiptDocument,
+  readReceipt,
+  scoreMatch,
+} from '../src/workflows/receipts.js';
 import { COMPANY, type OpOptions, rawOp } from './helpers/fixtures.js';
+import { makePdf } from './helpers/pdf.js';
+import { tempHome } from './helpers/run.js';
 
 const op = (o: OpOptions) =>
   normalizeOperation(rawOperationSchema.parse(rawOp(o)), { company: COMPANY });
@@ -14,6 +24,7 @@ function doc(partial: Partial<ReceiptDocument> & { name: string }): ReceiptDocum
     totals: [],
     amounts: partial.totals ?? [],
     dates: [],
+    dateSource: partial.dates?.length ? 'text' : null,
     currency: 'EUR',
     extracted: true,
     ...partial,
@@ -131,5 +142,90 @@ describe('matchReceipts', () => {
     const files = [doc({ name: 'x.pdf', totals: [48] })]; // amount only: score 0.65
     expect(matchReceipts(files, ops, { minScore: 0.6 }).steps).toHaveLength(1);
     expect(matchReceipts(files, ops, { minScore: 0.8 }).steps).toHaveLength(0);
+  });
+});
+
+describe('real-use fixes', () => {
+  it('targets only operations without a document by default; --include-attached opts in', () => {
+    const stripe = op({
+      id: 300,
+      date: '2026-08-02',
+      wording: 'STRIPE FICTIONAL',
+      amount: 29,
+      attachments: [{ name: 'Invoice-AB12-0007.pdf' }],
+    });
+    const other = op({
+      id: 301,
+      date: '2026-08-02',
+      wording: 'ORBIT TOOLS',
+      amount: 15,
+      attachments: [{ name: 'orbit-aug.pdf' }],
+    });
+    const docs = [
+      doc({
+        name: 'Receipt-AB12-0007.pdf',
+        text: 'STRIPE FICTIONAL',
+        totals: [29],
+        dates: ['2026-08-02'],
+      }),
+      doc({ name: 'orbit-receipt.pdf', text: 'ORBIT TOOLS', totals: [15], dates: ['2026-08-02'] }),
+    ];
+    const byDefault = matchReceipts(docs, [stripe, other], { minScore: 0.8 });
+    // Invoice-N and Receipt-N with the same number are the same document.
+    expect(byDefault.report.alreadyAttached).toEqual([
+      { file: '/inbox/Receipt-AB12-0007.pdf', op: '300' },
+    ]);
+    expect(byDefault.report.alreadyDocumented).toEqual([
+      expect.objectContaining({
+        file: '/inbox/orbit-receipt.pdf',
+        op: '301',
+        existing: ['orbit-aug.pdf'],
+      }),
+    ]);
+    expect(byDefault.steps).toEqual([]);
+    const opted = matchReceipts(docs, [stripe, other], { minScore: 0.8, includeAttached: true });
+    expect(opted.steps.map((s) => s.op)).toEqual(['301']);
+  });
+
+  it('documentKey treats invoice/receipt variants and opId prefixes as one document', () => {
+    expect(documentKey('Invoice-AB12-0007.pdf')).toBe(documentKey('123_Receipt-AB12-0007.pdf'));
+    expect(documentKey('facture_2026_0042.pdf')).toBe(documentKey('recu-2026-0042.pdf'));
+    expect(documentKey('invoice.pdf')).toBeNull();
+  });
+
+  it('a date in the file name decides the billing period over dates in the text', async () => {
+    const dir = tempHome();
+    const file = join(dir, 'sentry-fictional-2026-07-20.pdf');
+    // The text mentions the next period's date, as SaaS invoices do.
+    writeFileSync(file, makePdf(['FICTIONAL SENTRY', 'Period ends 2026-08-19', 'Total 26,00 EUR']));
+    const document = await readReceipt(file);
+    expect(document).toMatchObject({ dates: ['2026-07-20'], dateSource: 'filename' });
+    const july = op({ id: 310, date: '2026-07-20', wording: 'FICTIONAL SENTRY', amount: 26 });
+    const august = op({ id: 311, date: '2026-08-20', wording: 'FICTIONAL SENTRY', amount: 26 });
+    expect(scoreMatch(document, august).total).toBeLessThan(0.8);
+    const { steps } = matchReceipts([document], [july, august], { minScore: 0.8 });
+    expect(steps).toEqual([
+      expect.objectContaining({ op: '310', why: expect.stringContaining('date +0d (file name)') }),
+    ]);
+  });
+
+  it('honours the <opId>_ prefix: that operation, or a skip, never another one', () => {
+    const named = op({ id: 320, date: '2026-01-05', wording: 'OLD THING', amount: 99 });
+    const lookalike = op({ id: 321, date: '2026-08-02', wording: 'NIMBUS', amount: 48 });
+    const attached = op({ id: 322, amount: 10, attachments: [{ name: 'inv-7.pdf' }] });
+    const byId = new Map([named, attached].map((o) => [o.id, o]));
+    const docs = [
+      doc({ name: '320_nimbus.pdf', text: 'NIMBUS', totals: [48], dates: ['2026-08-02'] }),
+      doc({ name: '322_inv-7.pdf', totals: [10] }),
+      doc({ name: '999_nimbus.pdf', text: 'NIMBUS', totals: [48], dates: ['2026-08-02'] }),
+    ];
+    const { report, steps } = matchReceipts(docs, [named, lookalike, attached], {
+      minScore: 0.8,
+      byId,
+    });
+    expect(steps[0]).toMatchObject({ op: '320', why: expect.stringContaining('prefix') });
+    expect(report.alreadyAttached).toEqual([{ file: '/inbox/322_inv-7.pdf', op: '322' }]);
+    // 999 is not an operation: ordinary matching applies.
+    expect(steps[1]).toMatchObject({ op: '321' });
   });
 });
