@@ -23,7 +23,13 @@ function opPosts(api: FakeDougs) {
 
 describe('set: category + VAT exemption', () => {
   it('sets the category first, then zeroes VAT, then sets the reason (two passes), via `breakdowns`', async () => {
-    const raw = rawOp({ id: 1, category: 'uncategorized', vatRate: 20, amount: 84 });
+    const raw = rawOp({
+      id: 1,
+      category: 'uncategorized',
+      vatRate: 20,
+      amount: 84,
+      validated: false,
+    });
     const api = new FakeDougs([raw]);
     const result = await executeStep(
       dougsFor(api),
@@ -82,7 +88,7 @@ describe('set: category + VAT exemption', () => {
   });
 
   it('resumes a half-applied exemption (VAT already zeroed) despite its old expectation', async () => {
-    const raw = rawOp({ id: 3, vatRate: 20, amount: 60 });
+    const raw = rawOp({ id: 3, vatRate: 20, amount: 60, validated: false });
     const expectation = observe(toOp(raw));
     raw.breakdowns[0] = {
       ...raw.breakdowns[0]!,
@@ -170,7 +176,7 @@ describe('set: VAT rate, memo; validate; attach; detach', () => {
   });
 
   it('updates the memo, sending the unchanged main breakdown as updatedBreakdown', async () => {
-    const api = new FakeDougs([rawOp({ id: 11 })]);
+    const api = new FakeDougs([rawOp({ id: 11, validated: false })]);
     await executeStep(
       dougsFor(api),
       step({ op: '11', action: 'set', set: { memo: 'Annual plan' }, why: 'x' }),
@@ -203,7 +209,7 @@ describe('set: VAT rate, memo; validate; attach; detach', () => {
   });
 
   it('detaches an attachment', async () => {
-    const raw = rawOp({ id: 14, attachments: [{ name: 'wrong.pdf' }] });
+    const raw = rawOp({ id: 14, attachments: [{ name: 'wrong.pdf' }], validated: false });
     const api = new FakeDougs([raw]);
     const attId = String(raw.sourceDocumentAttachments[0]!.id);
     await executeStep(
@@ -235,7 +241,7 @@ describe('applyPlan', () => {
   });
 
   it('never writes in dry-run and reports before → after', async () => {
-    const api = new FakeDougs([rawOp({ id: 21, category: 'ads' })]);
+    const api = new FakeDougs([rawOp({ id: 21, category: 'ads', validated: false })]);
     const plan = buildPlan(COMPANY, 'test', [
       { op: '21', action: 'set', set: { category: 77 }, why: 'x' },
     ]);

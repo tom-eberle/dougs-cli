@@ -198,6 +198,6 @@ In JSON mode a failure prints one line on **stderr**:
 | 2 | Usage, or confirmation required | `USAGE`, `CONFIRMATION_REQUIRED`, `PLAN_INVALID`, `UNSAFE_ATTACHMENT`, `FILED_PERIOD`, `NOT_VALIDATABLE`, `SALES_EXEMPTION_UNSUPPORTED`, `RULES_INVALID`, `COMPANY_REQUIRED`, `SPLIT_OPERATION`, `CATEGORY_REQUIRED` |
 | 3 | Auth missing or expired | `AUTH_MISSING`, `AUTH_EXPIRED`, `COOKIE_MISSING`, `KEYCHAIN_UNAVAILABLE` |
 | 4 | Not found | `NOT_FOUND` |
-| 5 | Rejected by Dougs | `API_REJECTED`, `FORBIDDEN`, `LOCKED`, `VERIFY_FAILED`, `EXEMPTION_UNAVAILABLE`, `PARTIALLY_APPLIED` |
+| 5 | Rejected by Dougs | `API_REJECTED`, `FORBIDDEN`, `LOCKED`, `VALIDATED_READONLY`, `NOT_REVALIDATED`, `VERIFY_FAILED`, `EXEMPTION_UNAVAILABLE`, `PARTIALLY_APPLIED` |
 | 6 | Network, 5xx after retries, or unexpected API shape | `NETWORK`, `API_UNAVAILABLE`, `API_SHAPE`, `PERIODS_UNKNOWN` |
 | 7 | Plan partially failed, hit conflicts, or caused side effects | (see the report) |

@@ -103,7 +103,9 @@ export class ApiClient {
         this.log(`${method} ${pathOnly(path)} → ${response.status} (${Date.now() - started} ms)`);
 
         if (
-          (response.status === 401 || response.status === 403) &&
+          // 401 means the session is gone. A 403 is only a session problem on reads: on a
+          // write it is Dougs refusing that change, and a fresh cookie would not help.
+          (response.status === 401 || (response.status === 403 && method === 'GET')) &&
           !authRetried &&
           (await this.freshSession(sent))
         ) {
@@ -227,11 +229,17 @@ export class ApiClient {
         status,
       });
     if (status === 403)
-      return new DougsError('FORBIDDEN', `Dougs refused access to ${where}${detail}`, {
-        exitCode: ExitCode.rejected,
-        hint: 'check --company, or log in again: dougs login --from-browser chrome',
-        status,
-      });
+      return method === 'GET'
+        ? new DougsError('FORBIDDEN', `Dougs refused access to ${where}${detail}`, {
+            exitCode: ExitCode.rejected,
+            hint: 'check --company, or log in again: dougs login --from-browser chrome',
+            status,
+          })
+        : new DougsError('FORBIDDEN', `Dougs refused the change: ${where}${detail}`, {
+            exitCode: ExitCode.rejected,
+            hint: 'your session is fine (reads work); Dougs does not allow this change on this record — check it in the web app',
+            status,
+          });
     if (status === 404) return notFound(`Not found: ${where}`);
     if (status === 429 || status >= 500)
       return new DougsError(

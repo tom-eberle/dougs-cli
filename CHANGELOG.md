@@ -12,6 +12,10 @@ All notable changes to this project are documented here. The format follows
   `outside-eu`, `inside-eu` and `no-document`. Purchase exemptions are refused on sales lines.
 
 ### Fixed
+- Editing a validated operation (403 on live data): like the web app, the CLI now reopens it,
+  edits, and validates it again, reporting both steps; a refused reopening is
+  `VALIDATED_READONLY`. A 403 on a write no longer triggers a session refresh or a "log in
+  again" hint.
 - `receipts match` only targets operations without a document by default (`--include-attached`
   to widen) and reports how many files it excluded; invoice/receipt files with the same number
   count as the same document; `<opId>_name` files go to that operation or are skipped; a date in

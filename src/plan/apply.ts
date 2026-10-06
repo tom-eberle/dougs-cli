@@ -92,15 +92,6 @@ async function setExemption(
   kind: keyof typeof EXEMPTION_VALUES,
 ) {
   const original = rawBreakdown(raw, id);
-  if (original.categoryId === -1)
-    throw new DougsError(
-      'CATEGORY_REQUIRED',
-      `Operation ${raw.id} is uncategorized; Dougs needs a category before a VAT exemption`,
-      {
-        exitCode: ExitCode.usage,
-        hint: 'add "category" to the same set step (see: dougs categories list)',
-      },
-    );
   let op = raw;
   let b = original;
   if (b.vatAmount !== 0 || b.vatRate != null) {
@@ -187,6 +178,44 @@ async function applySet(
     await dougs.updateOperation({ ...current, memo: s.memo }, rawBreakdown(current, id));
 }
 
+/**
+ * Un-validate a validated operation so it can be edited (what the web app's
+ * validate toggle sends). If Dougs refuses that too, the operation is read-only.
+ */
+async function unvalidate(dougs: Dougs, raw: RawOperation): Promise<RawOperation> {
+  try {
+    return await dougs.updateOperation({ ...raw, validated: false });
+  } catch (error) {
+    const e = toDougsError(error);
+    if (e.code !== 'FORBIDDEN') throw e;
+    throw new DougsError(
+      'VALIDATED_READONLY',
+      `Operation ${raw.id} is validated and Dougs refuses to reopen it for editing`,
+      {
+        exitCode: ExitCode.rejected,
+        status: e.status,
+        hint: 'reopen it in the Dougs web app (validate toggle) or ask your accountant — it may be under review for a declaration',
+      },
+    );
+  }
+}
+
+/** Validate again after an edit, unless Dougs would now show errors (then it stays open). */
+async function validateAgain(dougs: Dougs, opId: string): Promise<void> {
+  const now = await dougs.getRaw(opId);
+  const problems = validationProblems(now);
+  if (problems.length)
+    throw new DougsError(
+      'NOT_REVALIDATED',
+      `Edited operation ${opId}, but it cannot be validated again: ${problems.join('; ')}`,
+      {
+        exitCode: ExitCode.rejected,
+        hint: 'fix it, then: dougs ops validate <id>',
+      },
+    );
+  await dougs.updateOperation({ ...now, validated: true });
+}
+
 /** What the web app checks before letting a user validate an operation. */
 export function validationProblems(raw: RawOperation): string[] {
   const problems: string[] = [];
@@ -238,6 +267,16 @@ function guard(raw: RawOperation, op: Operation, step: PlanStep, options: ApplyO
   if (step.action === 'set' && step.set.vatExempt !== undefined) {
     // vatExempt writes a purchase reason; a supplier refund (inbound, isRefund) is still a purchase.
     const b = targetBreakdown(op, step);
+    // Uncategorized breakdowns have no associations, hence no exemption slot.
+    if (!b.category && step.set.category === undefined)
+      throw new DougsError(
+        'CATEGORY_REQUIRED',
+        `Operation ${raw.id} is uncategorized; Dougs needs a category before a VAT exemption`,
+        {
+          exitCode: ExitCode.usage,
+          hint: 'add "category" to the same set step (see: dougs categories list)',
+        },
+      );
     if (b.direction === 'income' && !b.isRefund)
       throw new DougsError(
         'SALES_EXEMPTION_UNSUPPORTED',
@@ -295,10 +334,21 @@ export async function executeStep(
       status: 'conflict',
       reason: `operation changed since the plan was made (${drift.join(', ')}); review it or re-run with --force`,
     };
+  // Dougs treats validated operations as read-only (web app: isReadOnly = validated
+  // || locked). Like its editor, un-validate first, edit, then validate again.
+  const revalidate = op.validated && (step.action === 'set' || step.action === 'detach');
+  if (revalidate)
+    result.changes = [
+      { field: 'validated', from: true, to: false },
+      ...result.changes,
+      { field: 'validated', from: false, to: true },
+    ];
   if (options.dryRun) return { ...result, status: 'planned' };
 
   const before = snapshot(op);
   try {
+    let current = raw;
+    if (revalidate) current = await unvalidate(dougs, raw);
     if (step.action === 'attach') {
       // Read the exact bytes that were checked (no path re-read later: TOCTOU-safe).
       const upload = await readUpload(step.file, policy);
@@ -307,10 +357,19 @@ export async function executeStep(
       ]);
     } else if (step.action === 'detach') await dougs.detachAttachment(step.op, step.attachmentId);
     else if (step.action === 'validate') await dougs.updateOperation({ ...raw, validated: true });
-    else await applySet(dougs, raw, op, step);
+    else await applySet(dougs, current, op, step);
+    if (revalidate) await validateAgain(dougs, step.op);
   } catch (error) {
     // Report what actually changed, so the audit log never claims "nothing" wrongly.
-    const now = await dougs.getOperation(step.op).catch(() => null);
+    let now = await dougs.getOperation(step.op).catch(() => null);
+    // If only the un-validation stuck, put the validation back (best effort).
+    if (revalidate && now && !now.op.validated) {
+      const only = snapshotDiff(before, snapshot(now.op));
+      if (only.length === 1 && only[0]!.field === 'validated') {
+        await dougs.updateOperation({ ...now.raw, validated: true }).catch(() => undefined);
+        now = await dougs.getOperation(step.op).catch(() => now);
+      }
+    }
     const left = now ? snapshotDiff(before, snapshot(now.op)) : [];
     const e = toDougsError(error);
     if (!left.length) throw e;

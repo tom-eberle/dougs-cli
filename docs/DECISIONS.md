@@ -60,6 +60,13 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
   rolled back; if anything still changed when a step fails, it fails as `PARTIALLY_APPLIED` and
   its `changes` list what was saved.
 - **Validation** is refused (`NOT_VALIDATABLE`, exit 2) when Dougs would show errors.
+- **Validated operations are reopened, edited and validated again** (`set` and `detach`), as the
+  web app does; `changes` shows `validated true → false` before and `false → true` after. If the
+  edit leaves errors, the operation stays open (`NOT_REVALIDATED`). If the edit fails and only the
+  reopening stuck, the validation is put back. A refused reopening is `VALIDATED_READONLY`.
+- **A 403 on a write is not a session problem**: no cookie refresh is attempted (reads still
+  refresh on 401/403), and the hint says the session is fine. `CATEGORY_REQUIRED` and
+  `SALES_EXEMPTION_UNSUPPORTED` are checked before any write, in previews too.
 - **Filed periods are protected.** `set`, `validate` and `detach` steps on operations in a period
   covered by a filed VAT return (monthly/quarterly CA3, annual CA12, any `vat:*` declaration) or
   in a closed accounting year are refused (`FILED_PERIOD`, exit 2) and left out of generated plans

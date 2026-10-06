@@ -32,6 +32,8 @@ export class FakeDougs {
   vendorInvoices = new Map<string, unknown>();
   declarations: { summary: Record<string, unknown>; form: Record<string, unknown> | null }[] = [];
   accountingYears = [{ id: 1, openingDate: '2025-03-01', closingDate: '2025-12-31', closed: true }];
+  /** Operations whose un-validation Dougs refuses (e.g. under review by the accountant). */
+  frozen = new Set<string>();
   /** Server-side side effects of an operation update (e.g. re-categorization side effects). */
   onUpdate?: (previous: RawOpFixture, next: RawOpFixture) => void;
   files = new Map<string, Uint8Array>();
@@ -173,6 +175,19 @@ export class FakeDougs {
         );
       // ASSUMED: server-side refusal of validation for operations with errors (the web
       // app refuses client-side; what the server does is unverified).
+      // OBSERVED (live 403) + web app code (isReadOnly = validated || locked): a validated
+      // operation can't be edited while it stays validated; un-validating it is allowed
+      // (the validate toggle) unless the operation is frozen.
+      if (current.validated) {
+        if (!sent.validated && this.frozen.has(one[1]!))
+          return Response.json({ message: 'Forbidden', statusCode: 403 }, { status: 403 });
+        const edited =
+          sent.validated &&
+          (JSON.stringify(sent.breakdowns) !== JSON.stringify(current.breakdowns) ||
+            sent.memo !== current.memo);
+        if (edited)
+          return Response.json({ message: 'Forbidden', statusCode: 403 }, { status: 403 });
+      }
       if (sent.validated && !current.validated) {
         const invalid =
           current.errors.length > 0 ||

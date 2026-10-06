@@ -123,6 +123,13 @@ changes nothing — always re-read to verify.
 - **Memo:** the full operation with `memo` changed. The web app sends no `updatedBreakdown`;
   dougs-cli sends the unchanged main breakdown, like the reference scripts — the server accepts
   both.
+- **Validated operations are read-only.** The web app's operation service has
+  `isReadOnly(op) = op.validated || isLocked(op)`, hides "delete attachment" on validated
+  operations, and its validate button toggles (`{validated: false}` on a validated operation). Its
+  accounting-survey editor un-validates first, then sends the edit with `validated` restored.
+  Live, a direct edit of a validated operation got **403** (no `X-Message-Code`). dougs-cli
+  therefore reopens (POST with `validated: false`), edits, and validates again; if Dougs refuses
+  the reopening it reports `VALIDATED_READONLY`.
 - **Validate:** the full operation with `validated: true` (no dedicated endpoint). The web app
   refuses to validate while the operation shows errors (`errors[]`, an uncategorized breakdown,
   breakdowns that don't add up, a required exemption reason missing); so does the CLI.

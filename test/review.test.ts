@@ -119,7 +119,7 @@ describe('S1 failed exemption is rolled back or reported', () => {
   });
 
   it('reports a partial write with the changes that stuck', async () => {
-    const api = new FakeDougs([rawOp({ id: 11, amount: 120 })]);
+    const api = new FakeDougs([rawOp({ id: 11, amount: 120, validated: false })]);
     let posts = 0;
     api.onUpdate = (prev, next) => {
       posts++;
@@ -703,7 +703,9 @@ describe('re-review R items', () => {
   });
 
   it('R5: a VAT-rate edit sends the full breakdown like the web app; foreign-currency sends only manualVatAmount', async () => {
-    const api = new FakeDougs([rawOp({ id: 240, amount: 120, category: 'fuel', vatRate: 0 })]);
+    const api = new FakeDougs([
+      rawOp({ id: 240, amount: 120, category: 'fuel', vatRate: 0, validated: false }),
+    ]);
     const original = structuredClone(api.ops.get('240')!.breakdowns[0]!);
     await executeStep(
       dougsFor(api),
@@ -719,7 +721,7 @@ describe('re-review R items', () => {
       isVatAmountManuallyModified: original.isVatAmountManuallyModified,
     });
 
-    const fx = rawOp({ id: 241, amount: 92, vatRate: 0 });
+    const fx = rawOp({ id: 241, amount: 92, vatRate: 0, validated: false });
     (fx.breakdowns[0] as unknown as Record<string, unknown>).currencyConversion = {
       originalCurrency: 'USD',
       originalAmount: 100,
@@ -824,7 +826,13 @@ describe('VAT exemption reasons', () => {
   it('fixes VAT Dougs added on a franchise supplier (not-applicable, two passes)', async () => {
     // A French micro-entrepreneur ("TVA non applicable, art. 293 B CGI") booked with 20 % VAT.
     const api = new FakeDougs([
-      rawOp({ id: 400, wording: 'FICTIONAL FREELANCER', amount: 500, vatRate: 20 }),
+      rawOp({
+        id: 400,
+        wording: 'FICTIONAL FREELANCER',
+        amount: 500,
+        vatRate: 20,
+        validated: false,
+      }),
     ]);
     const r = await runCli(api, ['ops', 'set', '400', '--vat-exempt', 'not-applicable', '--yes']);
     expect(r.code).toBe(0);
@@ -882,5 +890,95 @@ describe('VAT exemption reasons', () => {
     expect(
       (await runCli(api, ['ops', 'set', '411', '--vat-exempt', 'not-applicable', '--yes'])).code,
     ).toBe(0);
+  });
+});
+
+describe('editing validated operations (Dougs treats them as read-only)', () => {
+  it('reopens, edits and validates again, reporting both steps', async () => {
+    const api = new FakeDougs([rawOp({ id: 500, date: '2026-06-12', category: 'ads' })]);
+    const r = await runCli(api, ['ops', 'set', '500', '--category', '77', '--yes']);
+    expect(r.code).toBe(0);
+    expect(r.json()).toMatchObject({
+      results: [
+        {
+          status: 'applied',
+          changes: [
+            { field: 'validated', from: true, to: false },
+            { field: 'category', from: 69, to: 77 },
+            { field: 'validated', from: false, to: true },
+          ],
+        },
+      ],
+    });
+    expect(api.writes.map((w) => (w.body as RawOpFixture).validated)).toEqual([false, false, true]);
+    expect(toOp(api.ops.get('500')!)).toMatchObject({ validated: true, category: { id: 77 } });
+  });
+
+  it('a direct edit of a validated operation is what Dougs refuses (the 403 seen live)', async () => {
+    const api = new FakeDougs([rawOp({ id: 501 })]);
+    const raw = api.ops.get('501')!;
+    const res = await api.fetch(`https://dougs.example.test/companies/${COMPANY}/operations/501`, {
+      method: 'POST',
+      headers: { cookie: `auth_session=${api.session}` },
+      body: JSON.stringify({ ...raw, memo: 'direct' }),
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('maps a refused reopening to VALIDATED_READONLY with an accurate hint', async () => {
+    const api = new FakeDougs([rawOp({ id: 502 })]);
+    api.frozen.add('502');
+    const r = await runCli(api, ['ops', 'set', '502', '--memo', 'x', '--yes']);
+    expect(r.code).toBe(5);
+    expect(r.error()).toMatchObject({
+      code: 'VALIDATED_READONLY',
+      hint: expect.stringContaining('web app'),
+    });
+    expect(r.error().hint).not.toContain('log in');
+    expect(api.ops.get('502')!.validated).toBe(true);
+  });
+
+  it('does not refresh the session on a 403 for a write, and says it is not a login problem', async () => {
+    let refreshes = 0;
+    const fetch = (async (_url: string, init: RequestInit) =>
+      init.method === 'POST'
+        ? new Response('', { status: 403 })
+        : Response.json({ ok: true })) as unknown as Fetch;
+    const client = new ApiClient({
+      session: 's',
+      baseUrl: 'https://dougs.example.test',
+      fetch,
+      sleep: async () => {},
+      refreshSession: async () => {
+        refreshes++;
+        return 'other';
+      },
+    });
+    await expect(client.post('/x', {})).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      hint: expect.stringContaining('session is fine'),
+    });
+    expect(refreshes).toBe(0);
+  });
+
+  it('puts the validation back when the edit itself fails', async () => {
+    const api = new FakeDougs([rawOp({ id: 503, amount: 120 })]);
+    api.onUpdate = (prev, next) => {
+      // No exemption slot is ever offered for this category.
+      for (const b of next.breakdowns) b.associations = [{ name: 'supplier', slots: {} }];
+      if (!next.validated && prev.validated) return;
+    };
+    const report = await applyPlan(
+      dougsFor(api),
+      buildPlan(COMPANY, 't', [
+        { op: '503', action: 'set', set: { vatExempt: 'outside-eu' }, why: 'x' },
+      ]),
+    );
+    expect(report.results[0]).toMatchObject({
+      status: 'failed',
+      error: { code: 'EXEMPTION_UNAVAILABLE' },
+      changes: [],
+    });
+    expect(api.ops.get('503')!.validated).toBe(true);
   });
 });

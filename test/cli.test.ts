@@ -156,7 +156,17 @@ describe('mutations', () => {
     expect(r.code).toBe(0);
     expect(r.json()).toMatchObject({
       meta: { dryRun: true, planned: 1 },
-      results: [{ changes: [{ field: 'vatRate', from: 20, to: 10 }, { field: 'vatAmount' }] }],
+      // 101 is validated: the preview shows the reopen / validate-again around the edit.
+      results: [
+        {
+          changes: [
+            { field: 'validated', from: true, to: false },
+            { field: 'vatRate', from: 20, to: 10 },
+            { field: 'vatAmount' },
+            { field: 'validated', from: false, to: true },
+          ],
+        },
+      ],
     });
     expect(api.writes).toHaveLength(0);
   });

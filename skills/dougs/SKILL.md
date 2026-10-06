@@ -124,6 +124,10 @@ dougs ops validate 10001 --yes --json
 - `FILED_PERIOD` (exit 2): its VAT return is filed or the year is closed. Ask the user before
   `--allow-filed-periods`; such changes usually require a corrective return.
 - `NOT_VALIDATABLE` (exit 2): fix the reported problems first.
+- Editing a validated operation reopens it and validates it again (both appear in `changes`).
+  `VALIDATED_READONLY` (exit 5): Dougs refused to reopen it (often under accountant review);
+  ask the user. `NOT_REVALIDATED`: the edit worked but the operation needs fixing before
+  `dougs ops validate`. A 403 on a write is never a login problem; don't ask the user to log in.
 - `conflict` steps (apply exit 7): the operation changed since planning; re-plan.
 - `sideEffects` on applied steps (exit 7): Dougs changed something else too; report it to the user.
 
