@@ -196,4 +196,4 @@ In JSON mode a failure prints one line on **stderr**:
 | 4 | Not found | `NOT_FOUND` |
 | 5 | Rejected by Dougs | `API_REJECTED`, `FORBIDDEN`, `LOCKED`, `VERIFY_FAILED`, `EXEMPTION_UNAVAILABLE`, `PARTIALLY_APPLIED` |
 | 6 | Network, 5xx after retries, or unexpected API shape | `NETWORK`, `API_UNAVAILABLE`, `API_SHAPE`, `PERIODS_UNKNOWN` |
-| 7 | Plan partially failed or hit conflicts | (see the report) |
+| 7 | Plan partially failed, hit conflicts, or caused side effects | (see the report) |

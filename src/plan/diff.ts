@@ -134,6 +134,8 @@ export function snapshot(op: Operation): Record<string, unknown> {
     const k = `breakdown ${b.id}`;
     s[`${k} category`] = b.category?.id ?? -1;
     s[`${k} amount`] = b.amount;
+    s[`${k} amountExcludingVat`] = b.amountExcludingVat;
+    s[`${k} recoverableVat`] = b.recoverableVat;
     s[`${k} vatRate`] = b.vatRate;
     s[`${k} vatAmount`] = b.vatAmount;
     s[`${k} vatExemptReason`] = b.vatExemptReason;
@@ -154,7 +156,14 @@ export function expectedKeys(op: Operation, step: PlanStep): Set<string> {
       const keys = new Set<string>();
       if (step.set.category !== undefined) keys.add(`${k} category`);
       if (step.set.vatRate !== undefined || step.set.vatExempt !== undefined)
-        for (const f of ['vatRate', 'vatAmount', 'vatExemptReason']) keys.add(`${k} ${f}`);
+        for (const f of [
+          'vatRate',
+          'vatAmount',
+          'vatExemptReason',
+          'amountExcludingVat',
+          'recoverableVat',
+        ])
+          keys.add(`${k} ${f}`);
       if (step.set.memo !== undefined) keys.add('memo');
       return keys;
     }

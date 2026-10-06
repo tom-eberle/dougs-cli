@@ -484,7 +484,7 @@ describe('S12 open and overdue declarations', () => {
       hasForm: true,
     });
     expect(s.lines.find((l) => l.box === 'A1')).toMatchObject({ declared: 1000 });
-    expect(s.notes.join(' ')).toContain('provisional');
+    expect(s.notes.join(' ')).toContain('if 2026-07 is filed as drafted, box 22 would be 40');
     const human = await runCli(
       withOpenAugust(),
       ['vat', 'summary', '--month', '2026-08', '--no-color'],
@@ -594,5 +594,214 @@ describe('N items', () => {
     const plan = join(dir, 'todo.plan.json');
     await runCli(new FakeDougs([rawOp({ id: 170 })]), ['todo', '--plan', plan]);
     expect(statSync(plan).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe('re-review R items', () => {
+  it('R1: box 22 comes from the last filed return, the draft chain is only a note', async () => {
+    const api = new FakeDougs([rawOp({ id: 200, date: '2026-08-10' })]);
+    const ca3 = (id: number, month: string, status: string, form: Record<string, unknown>) => ({
+      summary: {
+        id,
+        type: 'CA3-2026',
+        label: `TVA ${month}`,
+        periodStartDate: `${month}-01`,
+        periodEndDate: `${month}-28`,
+        status,
+        confirmedAt: status === 'completed' ? `${month}-28` : null,
+      },
+      form,
+    });
+    api.declarations.push(
+      ca3(1, '2026-06', 'completed', { '27': 100 }),
+      ca3(2, '2026-07', 'upcoming', { '27': 40 }),
+      ca3(3, '2026-08', 'upcoming', { '22': 100 }),
+    );
+    const s = (await runCli(api, ['vat', 'summary', '--month', '2026-08'])).json() as {
+      lines: {
+        box: string;
+        estimate: number | null;
+        declared: number | null;
+        difference: number | null;
+      }[];
+      notes: string[];
+    };
+    expect(s.lines.find((l) => l.box === '22')).toMatchObject({
+      estimate: 100,
+      declared: 100,
+      difference: 0,
+    });
+    expect(s.notes.join(' ')).toContain('last filed return (2026-06)');
+    expect(s.notes.join(' ')).toContain('box 22 would be 40');
+  });
+
+  it('R2: attach-only runs do not need the period list', async () => {
+    const dir = tempHome();
+    writeFileSync(join(dir, 'r.pdf'), '%PDF-1.4');
+    const api = new FakeDougs([rawOp({ id: 210 })]);
+    api.overrides.push((req) =>
+      req.path.includes('/declarations') ? new Response('', { status: 403 }) : undefined,
+    );
+    expect(
+      (await runCli(api, ['ops', 'attach', '210', join(dir, 'r.pdf'), '--yes', '--allow-any-path']))
+        .code,
+    ).toBe(0);
+    const plan = join(dir, 'r.plan.json');
+    writeFileSync(
+      plan,
+      JSON.stringify(
+        buildPlan(COMPANY, 't', [
+          { op: '210', action: 'attach', file: './r.pdf', name: 'second.pdf', why: 'x' },
+        ]),
+      ),
+    );
+    expect((await runCli(api, ['apply', plan, '--yes'])).code).toBe(0);
+    const set = await runCli(api, ['ops', 'set', '210', '--memo', 'x', '--yes']);
+    expect(set.code).toBe(6);
+    expect(set.error().code).toBe('PERIODS_UNKNOWN');
+  });
+
+  it('R3: detach is refused on locked operations and in filed periods', async () => {
+    const locked = rawOp({ id: 220, locked: 'manual', attachments: [{ name: 'only.pdf' }] });
+    const filed = rawOp({ id: 221, date: '2026-08-03', attachments: [{ name: 'inv.pdf' }] });
+    const api = new FakeDougs([locked, filed]);
+    filedAugust(api);
+    const r1 = await runCli(api, [
+      'ops',
+      'detach',
+      '220',
+      String(locked.sourceDocumentAttachments[0]!.id),
+      '--yes',
+    ]);
+    expect([r1.code, r1.error().code]).toEqual([5, 'LOCKED']);
+    const att = String(filed.sourceDocumentAttachments[0]!.id);
+    const r2 = await runCli(api, ['ops', 'detach', '221', att, '--yes']);
+    expect([r2.code, r2.error().code]).toEqual([2, 'FILED_PERIOD']);
+    expect(api.writes).toHaveLength(0);
+    expect(
+      (await runCli(api, ['ops', 'detach', '221', att, '--yes', '--allow-filed-periods'])).code,
+    ).toBe(0);
+  });
+
+  it('R4: an annual CA12 return protects its whole year', async () => {
+    const api = new FakeDougs([rawOp({ id: 230, date: '2026-04-10' })]);
+    api.declarations.push({
+      summary: {
+        id: 95,
+        type: 'CA12-2026',
+        group: 'vat:simplified',
+        label: 'TVA annuelle 2026',
+        periodStartDate: '2026-01-01',
+        periodEndDate: '2026-12-31',
+        status: 'completed',
+      },
+      form: null,
+    });
+    const r = await runCli(api, ['ops', 'set', '230', '--memo', 'x', '--yes']);
+    expect([r.code, r.error().code]).toEqual([2, 'FILED_PERIOD']);
+  });
+
+  it('R5: a VAT-rate edit sends the full breakdown like the web app; foreign-currency sends only manualVatAmount', async () => {
+    const api = new FakeDougs([rawOp({ id: 240, amount: 120, category: 'fuel', vatRate: 0 })]);
+    const original = structuredClone(api.ops.get('240')!.breakdowns[0]!);
+    await executeStep(
+      dougsFor(api),
+      step({ op: '240', action: 'set', set: { vatRate: 20 }, why: 'x' }),
+    );
+    const sent = (api.writes[0]!.body as RawOpFixture).breakdowns[0]!;
+    expect(sent).toMatchObject({
+      vatAmount: 20,
+      manualVatAmount: 20,
+      vatRate: 0.2,
+      vatAmountWithRecoverageRate: original.vatAmountWithRecoverageRate,
+      amountExcludingTaxesWithRecoverageRate: original.amountExcludingTaxesWithRecoverageRate,
+      isVatAmountManuallyModified: original.isVatAmountManuallyModified,
+    });
+
+    const fx = rawOp({ id: 241, amount: 92, vatRate: 0 });
+    (fx.breakdowns[0] as unknown as Record<string, unknown>).currencyConversion = {
+      originalCurrency: 'USD',
+      originalAmount: 100,
+    };
+    const api2 = new FakeDougs([fx]);
+    let fxSent: RawOpFixture['breakdowns'][number] | undefined;
+    api2.overrides.push((req) => {
+      if (req.method !== 'POST') return undefined;
+      fxSent = structuredClone((req.body as RawOpFixture).breakdowns[0]);
+      const body = structuredClone(req.body as RawOpFixture);
+      const b = body.breakdowns[0]!;
+      b.vatAmount = b.manualVatAmount ?? b.vatAmount; // the server derives vatAmount from manualVatAmount
+      b.vatAmountWithRecoverageRate = b.vatAmount;
+      b.amountExcludingTaxesWithRecoverageRate = b.amount - b.vatAmount;
+      api2.ops.set('241', body);
+      return Response.json(body);
+    });
+    await executeStep(
+      dougsFor(api2),
+      step({ op: '241', action: 'set', set: { vatRate: 20 }, why: 'x' }),
+    );
+    expect(fxSent).toMatchObject({ vatAmount: 0, manualVatAmount: 15.33 });
+  });
+
+  it('R5: a recoverable-VAT change is caught as a side effect', async () => {
+    const api = new FakeDougs([rawOp({ id: 250, amount: 120 })]);
+    api.onUpdate = (_prev, next) => {
+      next.breakdowns[0]!.vatAmountWithRecoverageRate = 0;
+    };
+    const report = await applyPlan(
+      dougsFor(api),
+      buildPlan(COMPANY, 't', [{ op: '250', action: 'set', set: { memo: 'x' }, why: 'x' }]),
+    );
+    expect(report.results[0]!.sideEffects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: 'breakdown 250 recoverableVat', from: 20, to: 0 }),
+      ]),
+    );
+  });
+
+  it('N-A: side effects make the command exit 7', async () => {
+    const api = new FakeDougs([rawOp({ id: 260 })]);
+    api.onUpdate = (_prev, next) => {
+      next.validated = false;
+    };
+    const r = await runCli(api, ['ops', 'set', '260', '--memo', 'x', '--yes']);
+    expect(r.code).toBe(7);
+    expect(r.json()).toMatchObject({ meta: { applied: 1, sideEffects: 1 } });
+  });
+
+  it('N-B: VERIFY_FAILED reports what the write did change', async () => {
+    const api = new FakeDougs([rawOp({ id: 270, category: 'ads' })]);
+    api.onUpdate = (_prev, next) => {
+      next.breakdowns[0]!.categoryId = 69; // ignores the category…
+      next.memo = 'touched'; // …but changes something else
+    };
+    const report = await applyPlan(
+      dougsFor(api),
+      buildPlan(COMPANY, 't', [{ op: '270', action: 'set', set: { category: 77 }, why: 'x' }]),
+    );
+    expect(report.results[0]).toMatchObject({
+      status: 'failed',
+      error: { code: 'VERIFY_FAILED' },
+      changes: [{ field: 'memo', to: 'touched' }],
+    });
+  });
+
+  it('N-G: a 401 after a successful refresh is not retried pointlessly', async () => {
+    let calls = 0;
+    const fetch = (async () => {
+      calls++;
+      return new Response('', { status: 401 });
+    }) as unknown as Fetch;
+    const client = new ApiClient({
+      session: 'stale',
+      baseUrl: 'https://dougs.example.test',
+      fetch,
+      sleep: async () => {},
+      refreshSession: async () => 'fresh',
+    });
+    await expect(client.get('/a')).rejects.toMatchObject({ code: 'AUTH_EXPIRED' });
+    calls = 0;
+    await expect(client.get('/b')).rejects.toMatchObject({ code: 'AUTH_EXPIRED' });
+    expect(calls).toBe(1);
   });
 });

@@ -1,6 +1,12 @@
 import type { Dougs, PeriodGuard } from '../api/dougs.js';
 import { DougsError, ExitCode } from '../output/errors.js';
-import { type ApplyOptions, applyPlan, executeStep, reportOf } from '../plan/apply.js';
+import {
+  type ApplyOptions,
+  applyPlan,
+  executeStep,
+  needsPeriodGuard,
+  reportOf,
+} from '../plan/apply.js';
 import { type ApplyReport, buildPlan, type StepDraft } from '../plan/types.js';
 import { VERSION } from '../version.js';
 import type { Context } from './context.js';
@@ -66,7 +72,10 @@ export async function runSteps(
     force: options.force,
     allowAnyPath: options.allowAnyPath,
     allowFiledPeriods: options.allowFiledPeriods,
-    periods: await loadPeriodGuard(dougs, options.allowFiledPeriods),
+    // Attach-only runs are never period-checked, so they don't depend on loading the periods.
+    periods: needsPeriodGuard(drafts)
+      ? await loadPeriodGuard(dougs, options.allowFiledPeriods)
+      : undefined,
   };
   const run = async (dryRun: boolean): Promise<ApplyReport> => {
     const startedAt = new Date().toISOString();
@@ -85,6 +94,7 @@ export async function runSteps(
   await ctx.confirm(confirmationQuestion(preview, dougs.company), options.yes);
   const report = await run(false);
   ctx.out.result(report, renderApplyReport);
-  if (report.meta.failed || report.meta.pending || report.meta.conflicts)
+  // Side effects also exit 7: an agent checking only the exit code must notice them.
+  if (report.meta.failed || report.meta.pending || report.meta.conflicts || report.meta.sideEffects)
     ctx.exitCode = ExitCode.partial;
 }

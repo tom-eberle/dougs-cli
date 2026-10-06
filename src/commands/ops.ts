@@ -298,14 +298,20 @@ export function registerOpsCommands(program: Command): void {
 
   withExamples(
     addMutationOptions(
-      ops.command('detach <id> <attachmentId>').description('Remove a document from an operation'),
+      ops
+        .command('detach <id> <attachmentId>')
+        .description('Remove a document from an operation (refused on locked operations)')
+        .option(
+          '--allow-filed-periods',
+          'Allow it in months whose VAT return is filed, or closed years',
+        ),
     ),
     'ops detach 10001 501 --dry-run',
   ).action(
     async (
       id: string,
       attachmentId: string,
-      o: { dryRun?: boolean; yes?: boolean },
+      o: { dryRun?: boolean; yes?: boolean; allowFiledPeriods?: boolean },
       cmd: Command,
     ) => {
       await runSteps(

@@ -34,6 +34,14 @@ export type DeclarationSummary = z.infer<typeof rawDeclarationSummarySchema> & {
   status: DeclarationStatus;
 };
 
+/**
+ * Any VAT return: monthly/quarterly CA3, annual CA12 (simplified regime), or a
+ * declaration in Dougs' `vat:*` group.
+ */
+export function isVatReturn(d: { type: string; group?: string | null }): boolean {
+  return /^(CA3|CA12|3310|3517)/i.test(d.type) || !!d.group?.startsWith('vat');
+}
+
 /** Answers "why must this date not be edited?" (null when it may be). */
 export interface PeriodGuard {
   reason(date: string): string | null;
@@ -321,7 +329,7 @@ export class Dougs {
    */
   async periodGuard(): Promise<PeriodGuard> {
     const [declarations, years] = await Promise.all([this.declarations(), this.accountingYears()]);
-    const filed = declarations.filter((d) => d.status === 'completed' && d.type.startsWith('CA3'));
+    const filed = declarations.filter((d) => d.status === 'completed' && isVatReturn(d));
     const closed = years.filter((y) => y.closed);
     return {
       reason(date: string) {

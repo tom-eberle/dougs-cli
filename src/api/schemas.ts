@@ -38,6 +38,10 @@ export const rawBreakdownSchema = z.looseObject({
   amountExcludingTaxesWithRecoverageRate: z.number(),
   associationData: z.record(z.string(), z.unknown()).nullable().optional(),
   associations: z.array(rawAssociationSchema).nullable().optional(),
+  currencyConversion: z
+    .looseObject({ originalCurrency: z.string().nullable().optional() })
+    .nullable()
+    .optional(),
 });
 export type RawBreakdown = z.infer<typeof rawBreakdownSchema>;
 
@@ -183,6 +187,7 @@ export type RawVendorInvoice = z.infer<typeof rawVendorInvoiceSchema>;
 export const rawDeclarationSummarySchema = z.looseObject({
   id,
   type: z.string(),
+  group: z.string().nullable().optional(),
   label: z.string().optional(),
   periodStartDate: z.string(),
   periodEndDate: z.string(),

@@ -18,8 +18,11 @@ export interface RecordedRequest {
 type Handler = (req: RecordedRequest) => Response | Promise<Response> | undefined;
 
 /**
- * In-memory stand-in for the Dougs API, faithful to the behaviours the CLI
- * depends on: date-descending pagination by validation status, edits read from
+ * In-memory stand-in for the Dougs API. Behaviours marked OBSERVED were seen
+ * live or in the web app's code; those marked ASSUMED are plausible models,
+ * not proof of how Dougs behaves — a passing test against them is not evidence.
+ *
+ * Faithful to the behaviours the CLI depends on: date-descending pagination by validation status, edits read from
  * `breakdowns` (not `updatedBreakdown`), the exemption slot appearing once VAT
  * is zero, and file downloads redirecting to signed storage.
  */
@@ -158,7 +161,8 @@ export class FakeDougs {
       const current = this.ops.get(one[1]!);
       if (!current) return notFound();
       const sent = req.body as RawOpFixture & { updatedBreakdown?: unknown };
-      // Like Dougs: locked ledgers refuse edits unless force=true (an accountant unlocking).
+      // ASSUMED: the status code and body of the locked-ledger refusal. OBSERVED (web app
+      // code): the X-Message-Code header value, and that force=true unlocks.
       if ((current.manuallyLocked || current.lockedByDate) && req.query.get('force') !== 'true')
         return Response.json(
           { message: 'Locked', statusCode: 400 },
@@ -167,6 +171,8 @@ export class FakeDougs {
             headers: { 'X-Message-Code': 'accountingLine.lockedByDateWithAccountingNumber' },
           },
         );
+      // ASSUMED: server-side refusal of validation for operations with errors (the web
+      // app refuses client-side; what the server does is unverified).
       if (sent.validated && !current.validated) {
         const invalid =
           current.errors.length > 0 ||
@@ -177,7 +183,7 @@ export class FakeDougs {
             { status: 400 },
           );
       }
-      // Like Dougs: the edit is read from `breakdowns`; updatedBreakdown is only a marker.
+      // OBSERVED: the edit is read from `breakdowns`; updatedBreakdown is only a marker.
       const next: RawOpFixture = {
         ...current,
         memo: sent.memo,
@@ -185,7 +191,8 @@ export class FakeDougs {
         breakdowns: structuredClone(sent.breakdowns),
       };
       for (const b of next.breakdowns) {
-        // Server-computed recoverable VAT (partially recoverable categories).
+        // ASSUMED: Dougs recomputes the recoverable-VAT fields on update (the web app sends
+        // them unchanged with a new VAT amount, which suggests it does).
         const rec = recoverage(b.categoryId);
         b.vatAmountWithRecoverageRate = Math.round(b.vatAmount * rec * 100) / 100;
         b.amountExcludingTaxesWithRecoverageRate =

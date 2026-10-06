@@ -117,7 +117,10 @@ changes nothing — always re-read to verify.
   breakdowns that don't add up, a required exemption reason missing); so does the CLI.
 - **VAT recovery:** `vatAmountWithRecoverageRate` / `amountExcludingTaxesWithRecoverageRate` are
   computed by the server from the category's recovery rate (partially recoverable VAT). Read them
-  for deductible VAT; don't send your own values when changing a VAT amount.
+  for deductible VAT. The web app's VAT edit sends the whole breakdown with only `vatAmount` and
+  `manualVatAmount` changed (only `manualVatAmount` when the breakdown has a non-EUR
+  `currencyConversion`), leaving these fields as they were; dougs-cli does the same. Whether the
+  server recomputes them is inferred from that, not observed.
 - **Locks:** operations with `manuallyLocked` or `lockedByDate` are not editable. An edit touching
   locked accounting lines fails with a 4xx and the header
   `X-Message-Code: accountingLine.lockedByDateWithAccountingNumber`. The web app then offers

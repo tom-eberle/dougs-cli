@@ -203,7 +203,9 @@ export class ApiClient {
         this.session = fresh;
         return fresh;
       });
-    return (await this.refresh) !== null;
+    // A cached refresh only helps if it produced a different session than this request sent.
+    const fresh = await this.refresh;
+    return fresh !== null && fresh !== sent;
   }
 
   private async toError(method: HttpMethod, path: string, response: Response): Promise<DougsError> {

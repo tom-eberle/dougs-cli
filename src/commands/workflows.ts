@@ -5,6 +5,7 @@ import type { DeclarationSummary, Dougs, OperationRecord } from '../api/dougs.js
 import { DougsError, ExitCode, usageError } from '../output/errors.js';
 import { style } from '../output/style.js';
 import { renderTable } from '../output/table.js';
+import { needsPeriodGuard } from '../plan/apply.js';
 import { buildPlan, type StepDraft } from '../plan/types.js';
 import { addDays, parseMonthOption, previousMonth, today } from '../util/dates.js';
 import { formatAmount } from '../util/money.js';
@@ -63,20 +64,20 @@ function progress(ctx: Context, label: string) {
 }
 
 /** Options shared by every command that writes fix plans. */
-function addPlanSafetyOptions(command: Command): Command {
-  return command
-    .option(
+function addPlanSafetyOptions(command: Command, { warnings = true } = {}): Command {
+  if (warnings)
+    command.option(
       '--include-warnings',
       'Also plan fixes backed by weaker evidence (warning-level findings)',
-    )
-    .option(
-      '--allow-filed-periods',
-      'Also plan edits in months whose VAT return is filed, or in closed years',
     );
+  return command.option(
+    '--allow-filed-periods',
+    'Also plan edits in months whose VAT return is filed, or in closed years',
+  );
 }
 
 /**
- * Keep plan steps that are safe to write: set/validate steps on operations in
+ * Keep plan steps that are safe to write: set/validate/detach steps on operations in
  * a filed VAT period or a closed year are held back (and counted) unless allowed.
  */
 async function withoutFiledPeriods(
@@ -86,11 +87,10 @@ async function withoutFiledPeriods(
   dates: ReadonlyMap<string, string>,
   allow?: boolean,
 ): Promise<{ steps: StepDraft[]; heldBack: number }> {
-  if (allow || !steps.some((s) => s.action === 'set' || s.action === 'validate'))
-    return { steps, heldBack: 0 };
+  if (allow || !needsPeriodGuard(steps)) return { steps, heldBack: 0 };
   const guard = await loadPeriodGuard(dougs);
   const kept = steps.filter((s) => {
-    if (s.action !== 'set' && s.action !== 'validate') return true;
+    if (s.action === 'attach') return true;
     const date = dates.get(s.op);
     return !date || !guard?.reason(date);
   });
@@ -405,9 +405,14 @@ export function registerWorkflowCommands(program: Command): void {
         .filter((f) => f.fix && (f.severity === 'error' || o.includeWarnings))
         .map((f) => f.fix!);
       const candidates = [...new Map(fixes.map((f) => [`${f.op}`, f])).values()];
-      const { steps: unique, heldBack } = o.plan
-        ? await withoutFiledPeriods(ctx, dougs, candidates, datesOf(records), o.allowFiledPeriods)
-        : { steps: candidates, heldBack: 0 };
+      // Counted even without --plan, so meta.fixes is what a plan would really contain.
+      const { steps: unique, heldBack } = await withoutFiledPeriods(
+        ctx,
+        dougs,
+        candidates,
+        datesOf(records),
+        o.allowFiledPeriods,
+      );
       const planPath = await maybeWritePlan(dougs, o.plan, 'vat check', unique);
       const counts: Record<string, number> = {};
       for (const f of findings) counts[f.code] = (counts[f.code] ?? 0) + 1;
@@ -470,13 +475,30 @@ export function registerWorkflowCommands(program: Command): void {
       declarationsOrEmpty(ctx, dougs),
     ]);
     const current = pickCa3(declarations, o.month);
+    // Box 22 is the credit carried from the last *filed* return (Dougs' drafts do
+    // the same: unfiled drafts don't chain). A chained projection is only a note.
+    const lastFiledMonth = declarations
+      .filter(
+        (d) =>
+          d.status === 'completed' &&
+          d.type.startsWith('CA3') &&
+          d.periodStartDate.slice(0, 7) < o.month,
+      )
+      .map((d) => d.periodStartDate.slice(0, 7))
+      .sort()
+      .at(-1);
+    const lastFiled = lastFiledMonth ? pickCa3(declarations, lastFiledMonth) : undefined;
     const previous = pickCa3(declarations, previousMonth(o.month));
-    const [currentForm, previousForm] = await Promise.all([
+    const previousDraft = previous && previous.status !== 'completed' ? previous : undefined;
+    const [currentForm, filedForm, draftForm] = await Promise.all([
       current ? dougs.declaration(String(current.id)).then((d) => d.form ?? null) : null,
-      previous ? dougs.declaration(String(previous.id)).then((d) => d.form ?? null) : null,
+      lastFiled ? dougs.declaration(String(lastFiled.id)).then((d) => d.form ?? null) : null,
+      previousDraft
+        ? dougs.declaration(String(previousDraft.id)).then((d) => d.form ?? null)
+        : null,
     ]);
     const previousCredit =
-      typeof previousForm?.['27'] === 'number' ? (previousForm['27'] as number) : null;
+      typeof filedForm?.['27'] === 'number' ? (filedForm['27'] as number) : null;
     const ops = records.map((r) => r.op);
     const { boxes, byRate } = estimateCa3(ops, categories, previousCredit);
     const notes = [
@@ -484,12 +506,16 @@ export function registerWorkflowCommands(program: Command): void {
     ];
     if (previousCredit === null)
       notes.push(
-        'Previous month’s return has no figures: box 22 (credit carried forward) is unknown and left out of box 23.',
+        'No filed return with a credit to carry: box 22 is unknown and left out of box 23.',
       );
-    else if (previous?.status !== 'completed')
-      notes.push('Box 22 comes from the previous month’s draft (not filed): provisional.');
     else
-      notes.push('Box 22 (credit carried forward) comes from the previous month’s filed return.');
+      notes.push(
+        `Box 22 (credit carried forward) is box 27 of the last filed return (${lastFiledMonth}), as in Dougs' drafts.`,
+      );
+    if (typeof draftForm?.['27'] === 'number' && draftForm['27'] !== previousCredit)
+      notes.push(
+        `Projection: if ${previousMonth(o.month)} is filed as drafted, box 22 would be ${draftForm['27']} instead.`,
+      );
     const corrective =
       declarations.filter(
         (d) =>
@@ -545,6 +571,8 @@ export function registerWorkflowCommands(program: Command): void {
           .option('--unvalidated-only', 'Only operations waiting for validation (the default)')
           .option('--include-validated', 'Also operations already validated in Dougs'),
       ),
+      // Rules are the user's own intent: there are no weaker fixes to opt into.
+      { warnings: false },
     ),
     'rules apply --plan rules.plan.json',
     'rules apply --rules ./config/dougs.rules.json --from 2026-01-01 --json',

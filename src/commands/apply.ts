@@ -3,7 +3,7 @@ import { dirname, resolve } from 'node:path';
 import type { Command } from 'commander';
 import { DougsError, ExitCode } from '../output/errors.js';
 import { style } from '../output/style.js';
-import { applyPlan } from '../plan/apply.js';
+import { applyPlan, needsPeriodGuard } from '../plan/apply.js';
 import { planSchema } from '../plan/types.js';
 import { contextOf } from './context.js';
 import { confirmationQuestion, loadPeriodGuard } from './mutate.js';
@@ -80,7 +80,9 @@ export function registerApplyCommand(program: Command): void {
       const plan = await readPlan(path);
       const dougs = await ctx.dougs();
       const baseDir = dirname(resolve(path));
-      const periods = await loadPeriodGuard(dougs, o.allowFiledPeriods);
+      const periods = needsPeriodGuard(plan.steps)
+        ? await loadPeriodGuard(dougs, o.allowFiledPeriods)
+        : undefined;
       ctx.out.info(style.dim(`Checking ${plan.steps.length} step(s) against the current state…`));
       const preview = await applyPlan(dougs, plan, {
         dryRun: true,
@@ -118,7 +120,13 @@ export function registerApplyCommand(program: Command): void {
       if (o.report)
         await writeFile(o.report, `${JSON.stringify(report, null, 2)}\n`, { mode: 0o600 });
       ctx.out.result(report, renderApplyReport);
-      if (report.meta.failed || report.meta.pending || report.meta.conflicts)
+      // Side effects also exit 7: an agent checking only the exit code must notice them.
+      if (
+        report.meta.failed ||
+        report.meta.pending ||
+        report.meta.conflicts ||
+        report.meta.sideEffects
+      )
         ctx.exitCode = ExitCode.partial;
     },
   );

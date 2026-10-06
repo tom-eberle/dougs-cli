@@ -32,7 +32,7 @@ export interface ApplyOptions {
   baseDir?: string;
   /** Allow attach steps to upload files outside the plan directory and cwd. */
   allowAnyPath?: boolean;
-  /** Filed VAT periods / closed years; set and validate steps there are refused. */
+  /** Filed VAT periods / closed years; set, validate and detach steps there are refused. */
   periods?: PeriodGuard;
   allowFiledPeriods?: boolean;
   onResult?: (result: StepResult) => void;
@@ -143,9 +143,10 @@ async function setExemption(
 }
 
 /**
- * Mirrors the web app's VAT edit (vatAmount + manualVatAmount) plus the rate.
- * The recoverable-VAT fields are left for the server to compute, so partially
- * recoverable categories stay correct.
+ * Mirrors the web app's VAT edit: the full breakdown with only the VAT amount
+ * changed (`vatAmount` + `manualVatAmount`; for a foreign-currency breakdown
+ * only `manualVatAmount`), plus the rate and a cleared exemption. Like the web
+ * app, the recoverable-VAT fields are sent as they are and recomputed by Dougs.
  */
 async function setVatRate(
   dougs: Dougs,
@@ -157,19 +158,15 @@ async function setVatRate(
   const vat = vatFromGross(b.amount, percent);
   const associationData = { ...(b.associationData ?? {}) };
   delete associationData.vatExemptionReason;
-  const {
-    vatAmountWithRecoverageRate: _recoverable,
-    amountExcludingTaxesWithRecoverageRate: _net,
-    ...rest
-  } = b;
+  const foreign =
+    !!b.currencyConversion?.originalCurrency && b.currencyConversion.originalCurrency !== 'EUR';
   return dougs.updateOperation(raw, {
-    ...rest,
+    ...b,
     vatRate: percent === 0 ? null : percentToRate(percent),
-    vatAmount: vat,
+    ...(foreign ? {} : { vatAmount: vat }),
     manualVatAmount: vat,
-    isVatAmountManuallyModified: true,
     associationData,
-  } as RawBreakdown);
+  });
 }
 
 async function applySet(
@@ -216,7 +213,9 @@ export function validationProblems(raw: RawOperation): string[] {
 
 /** Refusals that apply in previews and at apply time alike. */
 function guard(raw: RawOperation, op: Operation, step: PlanStep, options: ApplyOptions): void {
-  const writesLedger = step.action === 'set' || step.action === 'validate';
+  // Detaching can remove the only invoice behind VAT already deducted on a filed
+  // return, so it is guarded like an edit. Attaching a document stays allowed.
+  const writesLedger = step.action !== 'attach';
   if (writesLedger && op.locked)
     throw new DougsError(
       'LOCKED',
@@ -315,13 +314,16 @@ export async function executeStep(
   }
   const after = normalizeOperation(await dougs.getRaw(step.op), { company: dougs.company });
   if (!isSatisfied(after, step))
-    throw new DougsError(
-      'VERIFY_FAILED',
-      `Dougs accepted the change to operation ${step.op}, but re-reading it does not show it`,
-      {
-        exitCode: ExitCode.rejected,
-        hint: 'inspect it with: dougs ops get <id>; Dougs may process attachments asynchronously',
-      },
+    throw new StepError(
+      new DougsError(
+        'VERIFY_FAILED',
+        `Dougs accepted the change to operation ${step.op}, but re-reading it does not show it`,
+        {
+          exitCode: ExitCode.rejected,
+          hint: 'inspect it with: dougs ops get <id>; Dougs may process attachments asynchronously',
+        },
+      ),
+      snapshotDiff(before, snapshot(after)),
     );
   const sideEffects = snapshotDiff(before, snapshot(after), expectedKeys(op, step));
   return { ...result, status: 'applied', ...(sideEffects.length ? { sideEffects } : {}) };
@@ -393,4 +395,9 @@ export function reportOf(
     },
     results,
   };
+}
+
+/** Steps the period guard applies to; plans without any don't need to load it. */
+export function needsPeriodGuard(steps: readonly { action: PlanStep['action'] }[]): boolean {
+  return steps.some((s) => s.action !== 'attach');
 }

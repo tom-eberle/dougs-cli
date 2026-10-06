@@ -15,7 +15,8 @@ description: Run French bookkeeping workflows on Dougs (app.dougs.fr) with the d
 2. **Never handle the session cookie.** If a command exits 3, ask the user to run
    `dougs login --from-browser chrome` (or brave/edge/arc).
 3. **Branch on exit codes**: 0 ok · 2 usage or confirmation required · 3 auth · 4 not found ·
-   5 rejected by Dougs · 6 network/API changed (run `dougs doctor --json`) · 7 plan partially failed.
+   5 rejected by Dougs · 6 network/API changed (run `dougs doctor --json`) · 7 plan partially
+   failed, conflicts, or side effects (read the report).
 4. **Findings are signals.** Explain them; let the user (or their accountant) decide anything that
    is a matter of judgement. Never fabricate documents or change amounts.
 
@@ -119,7 +120,7 @@ dougs ops validate 10001 --yes --json
   `--allow-filed-periods`; such changes usually require a corrective return.
 - `NOT_VALIDATABLE` (exit 2): fix the reported problems first.
 - `conflict` steps (apply exit 7): the operation changed since planning; re-plan.
-- `sideEffects` on applied steps: report them to the user.
+- `sideEffects` on applied steps (exit 7): Dougs changed something else too; report it to the user.
 
 ## Data notes
 

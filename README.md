@@ -76,9 +76,12 @@ a side effect.
 
 Guard-rails on every change:
 
-- **Locked operations are never touched** (`LOCKED`); dougs-cli never asks Dougs to unlock a ledger.
-- **Filed periods are protected**: edits and validations in a month whose VAT return is filed, or
-  in a closed year, are refused and left out of plans unless `--allow-filed-periods`.
+- **Locked operations are never edited, validated or detached** (`LOCKED`); dougs-cli never asks
+  Dougs to unlock a ledger. Attaching a receipt stays allowed.
+- **Filed periods are protected**: edits, validations and detaches in a period whose VAT return is
+  filed, or in a closed year, are refused and left out of plans unless `--allow-filed-periods`.
+- **Side effects exit 7**: if Dougs changes anything the step did not ask for, it is listed in
+  the report and the command exits 7.
 - **Validation is refused** when Dougs would show errors on the operation.
 - **Fixes need strong evidence**: plans only include VAT fixes backed by Dougs' reverse-charge
   code, an explicit reverse-charge invoice, or a vendor in your rules file; add
@@ -224,7 +227,7 @@ Run `dougs <command> --help` for flags and examples.
 | 4 | Not found |
 | 5 | Rejected by Dougs (4xx), or a write that did not stick |
 | 6 | Network error, Dougs unavailable, or unexpected API response |
-| 7 | Plan partially failed |
+| 7 | Plan partially failed, hit conflicts, or caused side effects |
 
 Full contracts: [docs/schema.md](docs/schema.md).
 
