@@ -4,9 +4,11 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] — unreleased
+## [0.1.0] — 2026-10-06
 
-First release.
+First release, **experimental**: the write path is guarded and tested against a model of the
+Dougs API, but mutations have not yet been exercised widely against the live service. Review
+plans, start with `--dry-run`, and keep your accountant in the loop.
 
 ### Workflows
 - `dougs todo`: one worklist of missing receipts (with the 150 € full-invoice rule),
@@ -30,13 +32,15 @@ First release.
 - CSV export neutralizes spreadsheet formulas in text columns.
 - Human output strips terminal control characters coming from data; JSON is never altered.
 
-- Never sends `?force=true`: locked operations are refused (`LOCKED`), filed VAT periods and
-  closed years are protected (`--allow-filed-periods`), validation is refused when Dougs would show
-  errors, and every write is checked for side effects and partial application.
+- Never sends `?force=true`: locked operations are refused (`LOCKED`) for edits, validation and
+  detaching; periods covered by a filed VAT return (CA3, CA12) and closed years are protected
+  (`--allow-filed-periods`); validation is refused when Dougs would show errors; every write is
+  checked for side effects (exit 7) and partial application.
 - VAT fixes are planned only on strong evidence (`--include-warnings` for the rest); the attached
   invoice wins over the built-in vendor list.
-- `vat summary` shows Dougs' draft for open months, the declaration status and lateness;
-  `todo`/`close-check` report overdue declarations.
+- `vat summary` shows Dougs' filed return or draft side by side, the declaration status and
+  lateness, and takes box 22 from the last filed return as Dougs does; `todo`/`close-check` report
+  overdue declarations.
 
 ### Building blocks
 - `ops list|get|set|attach|detach|validate|download`, `receipts download`, `categories list`,
