@@ -52,10 +52,39 @@ export function observed(op: Operation) {
 }
 export function stale(op: Operation, step: PlanStep): boolean {
   const current = observed(op);
-  return Object.entries(step.expect ?? {}).some(
-    ([k, v]) =>
-      JSON.stringify(current[k as keyof typeof current]) !== JSON.stringify(v),
-  );
+  return Object.entries(step.expect ?? {}).some(([key, expected]) => {
+    const value = current[key as keyof typeof current];
+    if (JSON.stringify(value) === JSON.stringify(expected)) return false;
+    // A previous interrupted attempt may already have completed part of a set.
+    if (step.action === 'set') {
+      if (
+        key === 'category' &&
+        step.set.category !== undefined &&
+        value === step.set.category
+      )
+        return false;
+      if (
+        key === 'memo' &&
+        step.set.memo !== undefined &&
+        value === step.set.memo
+      )
+        return false;
+      if (
+        key === 'vatRate' &&
+        step.set.vatRate !== undefined &&
+        value === step.set.vatRate
+      )
+        return false;
+      if (
+        step.set.vatExempt &&
+        ((key === 'vatAmount' && value === 0) ||
+          (key === 'vatRate' && value === null) ||
+          (key === 'vatExemptReason' && value === step.set.vatExempt))
+      )
+        return false;
+    }
+    return true;
+  });
 }
 export function diff(op: Operation, step: PlanStep) {
   return {

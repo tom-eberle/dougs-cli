@@ -1,5 +1,6 @@
 import { Command, CommanderError } from 'commander';
 import { z } from 'zod';
+import { registerApply } from './commands/apply.js';
 import { example, registerCore } from './commands/core.js';
 import { registerResources } from './commands/resources.js';
 import { DougsError, errorObject } from './output/errors.js';
@@ -27,6 +28,7 @@ example(
 );
 registerCore(program);
 registerResources(program);
+registerApply(program);
 process.stdout.on('error', (e: NodeJS.ErrnoException) => {
   if (e.code === 'EPIPE') process.exit(0);
   else throw e;
