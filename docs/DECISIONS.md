@@ -10,7 +10,11 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
   (`-48.00`, `+1200.00`).
 - **VAT rates are percent** (`20`, `5.5`) everywhere in the CLI, plans and rules; the API's
   fractions (`0.2`) are converted at the edge.
-- **Exemptions use short names** (`outside-eu`, `inside-eu`, `no-document`); other Dougs values
+- **Exemptions use short names** for the five purchase reasons Dougs offers (`outside-eu`,
+  `inside-eu`, `outside-eu-not-imported`, `not-applicable`, `no-document`; read from the live
+  `vatExemptionReason` enum slot, they are not in the bundle). `vatExempt` is refused on sales
+  lines (`SALES_EXEMPTION_UNSUPPORTED`): it would write a purchase value; supplier refunds are
+  purchases and allowed. Other Dougs values
   (sales exemptions, `nonApplicable`, …) are passed through verbatim.
 - **Mirrors are null on split operations.** `category`, `vatRate`, … mirror the single main
   breakdown and are `null` when there are several; edits then need an explicit `breakdown` id.

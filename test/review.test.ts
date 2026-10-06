@@ -806,3 +806,81 @@ describe('re-review R items', () => {
     expect(calls).toBe(1);
   });
 });
+
+describe('VAT exemption reasons', () => {
+  it('normalizes every purchase reason Dougs offers to a short name, leaving sales values raw', () => {
+    const kinds = {
+      'exemption:outbound:outsideEuropeanUnion': 'outside-eu',
+      'exemption:outbound:insideEuropeanUnion': 'inside-eu',
+      'exemption:outbound:outsideEuropeanUnionNotImported': 'outside-eu-not-imported',
+      'exemption:outbound:nonApplicable': 'not-applicable',
+      'exemption:outbound:noAccountingDocument': 'no-document',
+      'exemption:inbound:nonApplicable': 'exemption:inbound:nonApplicable',
+    };
+    for (const [raw, kind] of Object.entries(kinds))
+      expect(op({ exemption: raw }).vatExemptReason, raw).toBe(kind);
+  });
+
+  it('fixes VAT Dougs added on a franchise supplier (not-applicable, two passes)', async () => {
+    // A French micro-entrepreneur ("TVA non applicable, art. 293 B CGI") booked with 20 % VAT.
+    const api = new FakeDougs([
+      rawOp({ id: 400, wording: 'FICTIONAL FREELANCER', amount: 500, vatRate: 20 }),
+    ]);
+    const r = await runCli(api, ['ops', 'set', '400', '--vat-exempt', 'not-applicable', '--yes']);
+    expect(r.code).toBe(0);
+    const reasons = api.writes.map(
+      (w) => (w.body as RawOpFixture).breakdowns[0]!.associationData.vatExemptionReason,
+    );
+    expect(reasons).toEqual([undefined, 'exemption:outbound:nonApplicable']);
+    expect(toOp(api.ops.get('400')!)).toMatchObject({
+      vatAmount: 0,
+      vatExemptReason: 'not-applicable',
+    });
+  });
+
+  it('offers the new reasons on the command line, in plans and in rules files', async () => {
+    const tree = (await runCli(new FakeDougs(), ['commands', '--json'])).json() as {
+      subcommands: {
+        name: string;
+        subcommands: { name: string; flags: { name: string; choices?: string[] }[] }[];
+      }[];
+    };
+    const set = tree.subcommands
+      .find((c) => c.name === 'ops')!
+      .subcommands.find((c) => c.name === 'set')!;
+    expect(set.flags.find((f) => f.name === 'vatExempt')?.choices).toEqual([
+      'outside-eu',
+      'inside-eu',
+      'outside-eu-not-imported',
+      'not-applicable',
+      'no-document',
+    ]);
+    const outcome = (await import('../src/workflows/rules.js')).rulesFileSchema.safeParse({
+      rules: [
+        { match: { wording: 'FREELANCER' }, set: { category: 77, vatExempt: 'not-applicable' } },
+      ],
+    });
+    expect(outcome.success).toBe(true);
+  });
+
+  it('refuses a purchase exemption on a sales line, but allows it on a supplier refund', async () => {
+    const sale = rawOp({ id: 410, income: true, category: 'sales', amount: 120 });
+    const refund = rawOp({ id: 411, income: true, refund: true, amount: 120 });
+    const api = new FakeDougs([sale, refund]);
+    const r = await runCli(api, ['ops', 'set', '410', '--vat-exempt', 'outside-eu', '--yes']);
+    expect([r.code, r.error().code]).toEqual([2, 'SALES_EXEMPTION_UNSUPPORTED']);
+    const preview = await runCli(api, [
+      'ops',
+      'set',
+      '410',
+      '--vat-exempt',
+      'outside-eu',
+      '--dry-run',
+    ]);
+    expect(preview.error().code).toBe('SALES_EXEMPTION_UNSUPPORTED');
+    expect(api.writes).toHaveLength(0);
+    expect(
+      (await runCli(api, ['ops', 'set', '411', '--vat-exempt', 'not-applicable', '--yes'])).code,
+    ).toBe(0);
+  });
+});

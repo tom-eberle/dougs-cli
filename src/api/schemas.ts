@@ -213,7 +213,23 @@ export const rawAccountingYearSchema = z.looseObject({
 
 // ───────────────────────────── normalized ─────────────────────────────
 
-export const VAT_EXEMPT_KINDS = ['outside-eu', 'inside-eu', 'no-document'] as const;
+/**
+ * Why a purchase carries no French VAT — the five reasons Dougs offers on
+ * purchases (`exemption:outbound:*`):
+ * - outside-eu: supplier established outside the EU (reverse charge)
+ * - inside-eu: supplier in another EU country (reverse charge / intra-EU acquisition)
+ * - outside-eu-not-imported: goods bought outside the EU and not imported into it
+ * - not-applicable: the supplier charges no VAT ("TVA non applicable", e.g. a French
+ *   micro-entrepreneur under the art. 293 B CGI franchise)
+ * - no-document: the justifying document is lost
+ */
+export const VAT_EXEMPT_KINDS = [
+  'outside-eu',
+  'inside-eu',
+  'outside-eu-not-imported',
+  'not-applicable',
+  'no-document',
+] as const;
 export const vatExemptKindSchema = z.enum(VAT_EXEMPT_KINDS);
 export type VatExemptKind = z.infer<typeof vatExemptKindSchema>;
 
@@ -248,7 +264,9 @@ export const breakdownSchema = z.object({
   vatExemptReason: z
     .string()
     .nullable()
-    .describe('outside-eu | inside-eu | no-document, or the raw Dougs value for other exemptions'),
+    .describe(
+      'Purchases: outside-eu | inside-eu | outside-eu-not-imported | not-applicable | no-document; other values (e.g. sales exemptions) are the raw Dougs value',
+    ),
 });
 export type Breakdown = z.infer<typeof breakdownSchema>;
 

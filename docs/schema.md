@@ -14,7 +14,9 @@ Conventions everywhere:
 - Amounts are EUR numbers with at most 2 decimals; amounts are **positive** and paired with a
   `direction` (`expense` | `income`).
 - VAT rates are **percent** (`20`, `5.5`, `2.1`); `null` means no rate.
-- VAT exemptions use short names — `outside-eu`, `inside-eu`, `no-document` — or the raw Dougs
+- VAT exemptions on purchases use short names — `outside-eu`, `inside-eu`,
+  `outside-eu-not-imported`, `not-applicable` (supplier charges no VAT, e.g. a French
+  micro-entrepreneur under art. 293 B CGI), `no-document` — or the raw Dougs
   value for anything else (e.g. `exemption:inbound:outsideEuropeanUnion` on sales).
 - Ids are strings. Dates are `YYYY-MM-DD`.
 - Lists print a JSON array (`--jsonl`: one object per line). Reports print `{ "meta": …, … }`.
@@ -134,7 +136,7 @@ vatAmount, reverseCharge, totals, currency }`.
 | Step field | Notes |
 |---|---|
 | `action` | `set`, `attach`, `detach`, `validate` |
-| `set` | Any of `category` (id), `vatRate` (percent), `vatExempt` (`outside-eu`/`inside-eu`/`no-document`), `memo` (string or null). `vatRate` and `vatExempt` are exclusive |
+| `set` | Any of `category` (id), `vatRate` (percent), `vatExempt` (`outside-eu`/`inside-eu`/`outside-eu-not-imported`/`not-applicable`/`no-document`, purchases only), `memo` (string or null). `vatRate` and `vatExempt` are exclusive |
 | `breakdown` | Optional breakdown id, required for split operations |
 | `file`, `name` | Attach: path relative to the plan file; display name defaults to the file name without a leading `<digits>_`. Only `.pdf .png .jpg .jpeg .heic .webp`, inside the plan's directory or the current directory (symlinks resolved) unless `apply --allow-any-path` |
 | `expect` | State seen when planning (`category` with `-1` for uncategorized, `vatRate`, `vatAmount`, `vatExemptReason`, `memo`, `validated`, `attachments` count). If it changed, `apply` skips the step unless `--force` |
@@ -193,7 +195,7 @@ In JSON mode a failure prints one line on **stderr**:
 |---|---|---|
 | 0 | OK (also for reports with findings) | |
 | 1 | Unexpected | `UNEXPECTED` |
-| 2 | Usage, or confirmation required | `USAGE`, `CONFIRMATION_REQUIRED`, `PLAN_INVALID`, `UNSAFE_ATTACHMENT`, `FILED_PERIOD`, `NOT_VALIDATABLE`, `RULES_INVALID`, `COMPANY_REQUIRED`, `SPLIT_OPERATION`, `CATEGORY_REQUIRED` |
+| 2 | Usage, or confirmation required | `USAGE`, `CONFIRMATION_REQUIRED`, `PLAN_INVALID`, `UNSAFE_ATTACHMENT`, `FILED_PERIOD`, `NOT_VALIDATABLE`, `SALES_EXEMPTION_UNSUPPORTED`, `RULES_INVALID`, `COMPANY_REQUIRED`, `SPLIT_OPERATION`, `CATEGORY_REQUIRED` |
 | 3 | Auth missing or expired | `AUTH_MISSING`, `AUTH_EXPIRED`, `COOKIE_MISSING`, `KEYCHAIN_UNAVAILABLE` |
 | 4 | Not found | `NOT_FOUND` |
 | 5 | Rejected by Dougs | `API_REJECTED`, `FORBIDDEN`, `LOCKED`, `VERIFY_FAILED`, `EXEMPTION_UNAVAILABLE`, `PARTIALLY_APPLIED` |

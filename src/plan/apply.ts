@@ -235,6 +235,16 @@ function guard(raw: RawOperation, op: Operation, step: PlanStep, options: ApplyO
         hint: 'editing it desynchronizes the books from what was filed; re-run with --allow-filed-periods if you really mean it',
       },
     );
+  if (step.action === 'set' && step.set.vatExempt !== undefined) {
+    // vatExempt writes a purchase reason; a supplier refund (inbound, isRefund) is still a purchase.
+    const b = targetBreakdown(op, step);
+    if (b.direction === 'income' && !b.isRefund)
+      throw new DougsError(
+        'SALES_EXEMPTION_UNSUPPORTED',
+        `Operation ${op.id}: vatExempt sets a purchase exemption, but this line is a sale`,
+        { exitCode: ExitCode.usage, hint: 'set sales VAT exemptions in the Dougs web app' },
+      );
+  }
   if (step.action === 'validate' && !op.validated) {
     const problems = validationProblems(raw);
     if (problems.length)

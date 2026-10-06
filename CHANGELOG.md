@@ -6,6 +6,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- `--vat-exempt` / `vatExempt` accept every purchase reason Dougs offers: `not-applicable`
+  (supplier under the VAT franchise, "TVA non applicable") and `outside-eu-not-imported`, besides
+  `outside-eu`, `inside-eu` and `no-document`. Purchase exemptions are refused on sales lines.
+
 ### Fixed
 - `receipts match` only targets operations without a document by default (`--include-attached`
   to widen) and reports how many files it excluded; invoice/receipt files with the same number

@@ -174,7 +174,10 @@ overdue. It is an estimate, clearly labelled as such.
 ```
 
 Match on `wording` (substring, or `/regex/flags`), `direction`, `amountMin`/`amountMax`,
-`account`; set `category`, `vatRate`, `vatExempt`, `memo`. First match wins; only operations that
+`account`; set `category`, `vatRate`, `vatExempt`, `memo`. `vatExempt` is why a purchase has no
+French VAT: `outside-eu`, `inside-eu`, `outside-eu-not-imported`, `not-applicable` (the supplier
+charges no VAT, e.g. a micro-entrepreneur: "TVA non applicable, art. 293 B CGI") or
+`no-document`. First match wins; only operations that
 differ get a step.
 
 ```sh
@@ -200,7 +203,7 @@ findings; counts are in the JSON `meta`.
 |---|---|
 | `dougs ops list` | `--validated/--unvalidated`, `--from/--to`, `--search`, `--missing-receipt`, `--category`, `--expense/--income`, `--limit` (50) / `--all`, `--raw` |
 | `dougs ops get <id>` | One operation with breakdowns and documents (`--raw` for the API object) |
-| `dougs ops set <id…>` | `--category`, `--vat-rate`, `--vat-exempt outside-eu\|inside-eu\|no-document`, `--memo`, `--dry-run`, `--yes` |
+| `dougs ops set <id…>` | `--category`, `--vat-rate`, `--vat-exempt outside-eu\|inside-eu\|outside-eu-not-imported\|not-applicable\|no-document`, `--memo`, `--dry-run`, `--yes` |
 | `dougs ops attach <id> <file…>` / `ops detach <id> <attachmentId>` | Upload or remove documents |
 | `dougs ops validate <id…>` | Mark as validated |
 | `dougs ops download <id>` / `receipts download` | Save documents as `<opId>_<filename>`, skipping existing files |

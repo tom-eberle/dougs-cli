@@ -102,6 +102,11 @@ dougs ops validate 10001 --yes --json
 }
 ```
 
+- `vatExempt` (purchases only) says why there is no French VAT: `outside-eu` / `inside-eu`
+  (foreign supplier, reverse charge), `outside-eu-not-imported` (goods bought abroad, not
+  imported), `not-applicable` (the supplier charges no VAT — e.g. a French micro-entrepreneur
+  whose invoice says "TVA non applicable, art. 293 B du CGI"; fix this when Dougs added 20 % VAT
+  after a re-categorization, often reported as a side effect), `no-document` (receipt lost).
 - Actions: `set` (`category`, `vatRate` in percent, `vatExempt`, `memo`), `attach` (`file`
   relative to the plan, optional `name`), `detach` (`attachmentId`), `validate`.
 - Attach files must be receipts (`.pdf .png .jpg .jpeg .heic .webp`) inside the plan's directory or
@@ -126,7 +131,7 @@ dougs ops validate 10001 --yes --json
 
 - Amounts are positive EUR with `direction` (`expense` / `income`); VAT rates are percent.
 - `category: null` means uncategorized. `vatExemptReason`: `outside-eu`, `inside-eu`,
-  `no-document`, or a raw Dougs value.
+  `outside-eu-not-imported`, `not-applicable`, `no-document`, or a raw Dougs value (sales).
 - `attachments[].type` becomes `vendorInvoice` a little after an upload (classification is
   asynchronous).
 - Use `--all` on lists when you need everything; the default limit is 50.

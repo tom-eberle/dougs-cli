@@ -17,6 +17,8 @@ import type {
 export const EXEMPTION_VALUES: Record<VatExemptKind, string> = {
   'outside-eu': 'exemption:outbound:outsideEuropeanUnion',
   'inside-eu': 'exemption:outbound:insideEuropeanUnion',
+  'outside-eu-not-imported': 'exemption:outbound:outsideEuropeanUnionNotImported',
+  'not-applicable': 'exemption:outbound:nonApplicable',
   'no-document': 'exemption:outbound:noAccountingDocument',
 };
 

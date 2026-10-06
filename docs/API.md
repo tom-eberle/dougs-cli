@@ -105,10 +105,21 @@ changes nothing — always re-read to verify.
 - **VAT exemption — two passes.** (1) zero the VAT: `manualVatAmount: 0, vatAmount: 0,
   vatAmountWithRecoverageRate: 0, vatRate: null, isVatAmountManuallyModified: true,
   amountExcludingTaxesWithRecoverageRate: <amount>`. The response now offers a
-  `vatExemptionReason` association. (2) set `associationData.vatExemptionReason` to
-  `exemption:outbound:outsideEuropeanUnion` | `exemption:outbound:insideEuropeanUnion` |
-  `exemption:outbound:noAccountingDocument`. Set the category first: uncategorized breakdowns
-  have no associations.
+  `vatExemptionReason` association (an `enum` slot). (2) set
+  `associationData.vatExemptionReason` to one of the purchase reasons below. Set the category
+  first: uncategorized breakdowns have no associations.
+
+  | Value (purchases) | Web app label | CLI name |
+  |---|---|---|
+  | `exemption:outbound:outsideEuropeanUnion` | C'est un achat hors union européenne | `outside-eu` |
+  | `exemption:outbound:insideEuropeanUnion` | C'est un achat en union européenne avec une TVA à 20 % | `inside-eu` |
+  | `exemption:outbound:outsideEuropeanUnionNotImported` | … hors union européenne non importé en UE | `outside-eu-not-imported` |
+  | `exemption:outbound:nonApplicable` | La TVA n'est pas applicable | `not-applicable` |
+  | `exemption:outbound:noAccountingDocument` | J'ai perdu les pièces justificatives | `no-document` |
+
+  Sales use `exemption:inbound:insideEuropeanUnion | outsideEuropeanUnion | nonApplicable`
+  (listed by `GET …/operations/{id}/associations/vat-exemption-reasons`); the CLI shows them raw
+  and does not set them. The values are not in the web bundle: they come from the slot data.
 - **Memo:** the full operation with `memo` changed. The web app sends no `updatedBreakdown`;
   dougs-cli sends the unchanged main breakdown, like the reference scripts — the server accepts
   both.
