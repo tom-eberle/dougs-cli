@@ -1,14 +1,24 @@
-import { z } from 'zod';
-import { ApiClient } from '../api/client.js';
-import { companySchema, userSchema, whoamiSchema } from '../api/schemas.js';
-import { readBrowserCookie } from '../auth/browser-cookies.js';
+import { join } from 'node:path';
+import type { Command } from 'commander';
+import { Cache } from '../api/cache.js';
+import { ApiClient, type Fetch } from '../api/client.js';
+import { Dougs } from '../api/dougs.js';
+import { type Company, rawUserSchema, type Whoami } from '../api/schemas.js';
+import type { BrowserSession } from '../auth/browser-cookies.js';
 import {
+  activeProfileName,
+  BROWSERS,
   type Browser,
-  profileName,
+  type Config,
+  cacheDir,
+  type Env,
+  type Profile,
   readConfig,
   writeConfig,
 } from '../auth/config.js';
-import { DougsError } from '../output/errors.js';
+import { DougsError, ExitCode, LOGIN_HINT } from '../output/errors.js';
+import { Output, type Writer } from '../output/format.js';
+
 export interface GlobalOptions {
   json?: boolean;
   jsonl?: boolean;
@@ -16,120 +26,192 @@ export interface GlobalOptions {
   company?: string;
   verbose?: boolean;
   quiet?: boolean;
+  color?: boolean;
   cache?: boolean;
 }
-export interface Context {
-  client: ApiClient;
-  company: string;
-  options: GlobalOptions;
+
+/** Everything the CLI touches in the outside world, injectable for tests. */
+export interface Runtime {
+  env: Env;
+  fetch: Fetch;
+  stdout: Writer;
+  stderr: Writer;
+  stdoutIsTTY: boolean;
+  stdinIsTTY: boolean;
+  readStdin: () => Promise<string>;
+  /** Ask a yes/no question on stderr; only called when both stdin and stdout are TTYs. */
+  ask: (question: string) => Promise<string>;
+  readBrowserSession: (browser: Browser) => Promise<BrowserSession>;
 }
-const rawUser = z.looseObject({
-  id: z.union([z.string(), z.number()]),
-  profile: z.looseObject({ fullName: z.string().optional() }).optional(),
-  firstName: z.string().nullable().optional(),
-  lastName: z.string().nullable().optional(),
-  name: z.string().nullable().optional(),
-  email: z.string().nullable().optional(),
-  companies: z
-    .array(
-      z.looseObject({
-        id: z.union([z.string(), z.number()]),
-        name: z.string().optional(),
-        businessName: z.string().optional(),
-        fullName: z.string().optional(),
-        legalName: z.string().optional(),
-      }),
-    )
-    .optional(),
-});
-export async function authenticated(options: GlobalOptions) {
-  const config = await readConfig();
-  const name = profileName(config, options.profile);
-  const profile = config.profiles[name] ?? {};
-  const session = process.env.DOUGS_SESSION || profile.session;
-  if (!session)
-    throw new DougsError(
-      'AUTH_MISSING',
-      'No Dougs session configured',
-      3,
-      'run: dougs login --from-browser chrome',
+
+export type AuthSource = Whoami['authSource'];
+
+export interface AuthState {
+  client: ApiClient;
+  config: Config;
+  profileName: string;
+  profile: Profile;
+  source: AuthSource;
+}
+
+export class Context {
+  readonly out: Output;
+  /** Exit code to use when the command completes without throwing (e.g. 7 for partial failure). */
+  exitCode: ExitCode = ExitCode.ok;
+  private authState?: Promise<AuthState>;
+  private userState?: Promise<{ user: Whoami['user']; companies: Company[] }>;
+  private dougsState?: Promise<Dougs>;
+
+  constructor(
+    readonly runtime: Runtime,
+    readonly options: GlobalOptions,
+  ) {
+    this.out = new Output(
+      {
+        json: options.json,
+        jsonl: options.jsonl,
+        quiet: options.quiet,
+        verbose: options.verbose,
+        stdoutIsTTY: runtime.stdoutIsTTY,
+      },
+      runtime.stdout,
+      runtime.stderr,
     );
-  const client = new ApiClient({
-    session,
-    verbose: options.verbose && !options.quiet,
-    refresh:
-      !process.env.DOUGS_SESSION && profile.source && profile.source !== 'token'
+  }
+
+  get env(): Env {
+    return this.runtime.env;
+  }
+
+  /** A client for the stored or environment-provided session. */
+  auth(): Promise<AuthState> {
+    this.authState ??= this.loadAuth();
+    return this.authState;
+  }
+
+  private async loadAuth(): Promise<AuthState> {
+    const config = await readConfig(this.env);
+    const profileName = activeProfileName(config, this.options.profile, this.env);
+    const profile = config.profiles[profileName] ?? {};
+    const envSession = this.env.DOUGS_SESSION?.trim();
+    const session = envSession || profile.session;
+    if (!session)
+      throw new DougsError('AUTH_MISSING', `Not logged in (profile "${profileName}")`, {
+        exitCode: ExitCode.auth,
+        hint: LOGIN_HINT,
+      });
+    const source: AuthSource = envSession ? 'env' : (profile.source ?? 'token');
+    this.out.addSecret(session);
+    const browser = (BROWSERS as readonly string[]).includes(source) ? (source as Browser) : null;
+    const client = new ApiClient({
+      session,
+      baseUrl: this.env.DOUGS_API_BASE,
+      fetch: this.runtime.fetch,
+      log: (line) => this.out.debug(line),
+      refreshSession: browser
         ? async () => {
-            const session = readBrowserCookie(profile.source as Browser);
-            config.profiles[name] = { ...profile, session };
-            await writeConfig(config);
-            return session;
+            const fresh = await this.runtime.readBrowserSession(browser);
+            this.out.addSecret(fresh.value);
+            config.profiles[profileName] = {
+              ...profile,
+              session: fresh.value,
+              savedAt: new Date().toISOString(),
+            };
+            await writeConfig(config, this.env);
+            return fresh.value;
           }
         : undefined,
-  });
-  return {
-    client,
-    config,
-    name,
-    profile,
-    source: process.env.DOUGS_SESSION ? 'env' : (profile.source ?? 'token'),
-  };
-}
-export async function identity(options: GlobalOptions) {
-  const auth = await authenticated(options);
-  const raw = rawUser.parse(await auth.client.request('GET', '/users/me'));
-  const listed = z
-    .array(
-      z.looseObject({
-        id: z.union([z.string(), z.number()]),
-        name: z.string().optional(),
-        businessName: z.string().optional(),
-        fullName: z.string().optional(),
-        legalName: z.string().optional(),
-      }),
-    )
-    .parse(await auth.client.request('GET', `/users/${raw.id}/companies`));
-  const companies = listed.map((c) =>
-    companySchema.parse({
-      id: String(c.id),
-      name: c.name ?? c.businessName ?? c.fullName ?? c.legalName ?? '',
-    }),
-  );
-  const company =
-    options.company ||
-    process.env.DOUGS_COMPANY ||
-    auth.profile.companyId ||
-    (companies.length === 1 ? companies[0]?.id : undefined);
-  const user = userSchema.parse({
-    id: String(raw.id),
-    name:
-      raw.name ??
-      raw.profile?.fullName ??
-      ([raw.firstName, raw.lastName].filter(Boolean).join(' ') || null),
-    email: raw.email ?? null,
-  });
-  return {
-    ...auth,
-    data: whoamiSchema.parse({
-      user,
-      companies,
-      activeCompany: company ?? null,
-      authSource: auth.source,
-    }),
-  };
-}
-export async function context(options: GlobalOptions): Promise<Context> {
-  const auth = await authenticated(options);
-  let company =
-    options.company || process.env.DOUGS_COMPANY || auth.profile.companyId;
-  if (!company)
-    company = (await identity(options)).data.activeCompany ?? undefined;
-  if (!company || !/^\d+$/.test(company))
+    });
+    return { client, config, profileName, profile, source };
+  }
+
+  /** Current user and the companies they can access. */
+  user(): Promise<{ user: Whoami['user']; companies: Company[] }> {
+    this.userState ??= (async () => {
+      const { client } = await this.auth();
+      const raw = rawUserSchema.parse(await client.get('/users/me'));
+      const companies = (raw.companies ?? []).map((c) => ({
+        id: String(c.id),
+        name: c.brandName || c.legalName || c.fullName || '',
+      }));
+      return {
+        user: { id: String(raw.id), name: raw.profile?.fullName ?? null, email: raw.email ?? null },
+        companies,
+      };
+    })();
+    return this.userState;
+  }
+
+  /** Resolve the company: --company, DOUGS_COMPANY, profile default, or the only one. */
+  async companyId(): Promise<string> {
+    const auth = await this.auth();
+    const explicit = this.options.company || this.env.DOUGS_COMPANY || auth.profile.companyId;
+    if (explicit) {
+      if (!/^\d+$/.test(explicit))
+        throw new DougsError('USAGE', `Company ids are numeric, got "${explicit}"`, {
+          exitCode: ExitCode.usage,
+        });
+      return explicit;
+    }
+    const { companies } = await this.user();
+    if (companies.length === 1) return companies[0]!.id;
     throw new DougsError(
       'COMPANY_REQUIRED',
-      'Select a company',
-      2,
-      'run dougs whoami; use --company <id>',
+      companies.length
+        ? `You have access to ${companies.length} companies; choose one`
+        : 'No company found for this user',
+      {
+        exitCode: ExitCode.usage,
+        hint: companies.length
+          ? `pass --company <id> (one of: ${companies.map((c) => c.id).join(', ')}) or set DOUGS_COMPANY`
+          : undefined,
+      },
     );
-  return { client: auth.client, company, options };
+  }
+
+  dougs(): Promise<Dougs> {
+    this.dougsState ??= (async () => {
+      const [{ client }, company] = await Promise.all([this.auth(), this.companyId()]);
+      const cache = new Cache(join(cacheDir(this.env), company), this.options.cache !== false);
+      return new Dougs(client, company, cache);
+    })();
+    return this.dougsState;
+  }
+
+  /**
+   * Gate a mutation. TTY: ask once. Non-interactive: refuse with exit 2 unless
+   * --yes, so an agent can never hang on a prompt.
+   */
+  async confirm(question: string, yes: boolean | undefined): Promise<void> {
+    if (yes) return;
+    if (!this.runtime.stdinIsTTY || !this.runtime.stdoutIsTTY)
+      throw new DougsError(
+        'CONFIRMATION_REQUIRED',
+        'This command changes data in Dougs and needs confirmation',
+        {
+          exitCode: ExitCode.usage,
+          hint: 're-run with --yes to apply, or --dry-run to preview',
+        },
+      );
+    const answer = await this.runtime.ask(`${question} [y/N] `);
+    if (!/^y(es)?$/i.test(answer.trim()))
+      throw new DougsError('CANCELLED', 'Cancelled; nothing was changed', {
+        exitCode: ExitCode.usage,
+      });
+  }
+}
+
+/** Resolve the shared Context from any (sub)command. */
+export function contextOf(command: Command): Context {
+  let root: Command = command;
+  while (root.parent) root = root.parent;
+  const holder = root as Command & { dougsContext?: Context; dougsRuntime?: Runtime };
+  if (!holder.dougsContext) {
+    if (!holder.dougsRuntime) throw new Error('CLI runtime not initialised');
+    holder.dougsContext = new Context(
+      holder.dougsRuntime,
+      command.optsWithGlobals<GlobalOptions>(),
+    );
+  }
+  return holder.dougsContext;
 }

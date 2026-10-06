@@ -1,27 +1,95 @@
-import { table } from './table.js';
+import { DougsError, ExitCode, errorPayload, redact, toDougsError } from './errors.js';
+import { style } from './style.js';
+
+export type OutputMode = 'human' | 'json' | 'jsonl';
+
+export interface Writer {
+  write(text: string): unknown;
+}
+
 export interface OutputOptions {
   json?: boolean;
   jsonl?: boolean;
   quiet?: boolean;
+  verbose?: boolean;
+  stdoutIsTTY: boolean;
 }
-export function isJson(
-  options: OutputOptions,
-  tty = process.stdout.isTTY,
-): boolean {
-  return !!(options.json || options.jsonl || !tty);
+
+export function resolveMode(
+  options: Pick<OutputOptions, 'json' | 'jsonl' | 'stdoutIsTTY'>,
+): OutputMode {
+  if (options.jsonl) return 'jsonl';
+  if (options.json || !options.stdoutIsTTY) return 'json';
+  return 'human';
 }
-export function output(
-  data: unknown,
-  options: OutputOptions = {},
-  rows?: Record<string, unknown>[],
-): void {
-  if (options.jsonl) {
-    for (const item of Array.isArray(data) ? data : [data])
-      process.stdout.write(`${JSON.stringify(item)}\n`);
-  } else if (isJson(options))
-    process.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
-  else
-    process.stdout.write(
-      `${rows ? table(rows) : Array.isArray(data) ? table(data.map((item) => (typeof item === 'object' && item !== null ? (item as Record<string, unknown>) : { value: item }))) : JSON.stringify(data, null, 2)}\n`,
-    );
+
+/**
+ * The only place that writes to stdout/stderr. Data goes to stdout; everything
+ * else (progress, warnings, errors) goes to stderr so pipes stay parseable.
+ */
+export class Output {
+  readonly mode: OutputMode;
+  private readonly secrets: string[] = [];
+
+  constructor(
+    private readonly options: OutputOptions,
+    private readonly stdout: Writer,
+    private readonly stderr: Writer,
+  ) {
+    this.mode = resolveMode(options);
+  }
+
+  get human(): boolean {
+    return this.mode === 'human';
+  }
+
+  /** Register a value that must never be printed (session cookies). */
+  addSecret(secret: string): void {
+    if (secret) this.secrets.push(secret);
+  }
+
+  /** Emit command data. Arrays stream one object per line in JSONL mode. */
+  result<T>(data: T, human?: (data: T) => string): void {
+    if (this.mode === 'jsonl') {
+      for (const item of Array.isArray(data) ? data : [data])
+        this.stdout.write(`${JSON.stringify(item)}\n`);
+    } else if (this.mode === 'json' || !human) {
+      this.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
+    } else {
+      const text = human(data);
+      if (text) this.stdout.write(text.endsWith('\n') ? text : `${text}\n`);
+    }
+  }
+
+  /** Progress and informational messages (stderr; silenced by --quiet). */
+  info(message: string): void {
+    if (!this.options.quiet) this.stderr.write(`${redact(message, this.secrets)}\n`);
+  }
+
+  warn(message: string): void {
+    this.stderr.write(`${style.yellow('warning')} ${redact(message, this.secrets)}\n`);
+  }
+
+  /** HTTP/debug logging, only with --verbose. */
+  debug(message: string): void {
+    if (this.options.verbose) this.stderr.write(`${style.dim(redact(message, this.secrets))}\n`);
+  }
+
+  /** Report a failure on stderr; returns the exit code to use. */
+  error(error: unknown): ExitCode {
+    const e = toDougsError(error);
+    const payload = errorPayload(e, this.secrets);
+    if (this.mode === 'human') {
+      const lines = [
+        `${style.red('error')} ${payload.error.message} ${style.dim(`(${payload.error.code})`)}`,
+      ];
+      if (payload.error.hint) lines.push(`${style.dim('hint')}  ${payload.error.hint}`);
+      if (this.options.verbose && e.cause instanceof Error && e.cause.stack)
+        lines.push(style.dim(redact(e.cause.stack, this.secrets)));
+      this.stderr.write(`${lines.join('\n')}\n`);
+    } else {
+      this.stderr.write(`${JSON.stringify(payload)}\n`);
+    }
+    return e instanceof DougsError ? e.exitCode : ExitCode.unexpected;
+  }
 }

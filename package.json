@@ -1,16 +1,27 @@
 {
   "name": "dougs-cli",
   "version": "0.1.0",
-  "description": "Unofficial Dougs accounting CLI for humans and agents",
+  "description": "Unofficial command-line client for the Dougs accounting platform, built for humans and AI agents",
+  "keywords": [
+    "dougs",
+    "accounting",
+    "comptabilite",
+    "tva",
+    "vat",
+    "cli",
+    "agents"
+  ],
   "type": "module",
   "bin": {
     "dougs": "dist/cli.js"
   },
   "files": [
     "dist",
+    "skills",
     "README.md",
-    "LICENSE",
-    "skills"
+    "AGENTS.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=22.13.0"
@@ -21,7 +32,8 @@
     "lint": "biome check .",
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check": "npm run lint && npm run typecheck && npm test && npm run build"
   },
   "dependencies": {
     "commander": "^14.0.0",

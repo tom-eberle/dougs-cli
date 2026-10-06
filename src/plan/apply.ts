@@ -1,167 +1,71 @@
-import { basename } from 'node:path';
-import { Resources, uploadName } from '../api/resources.js';
-import {
-  exemptionValues,
-  normalizeOperation,
-  type Operation,
-  type RawBreakdown,
-  type RawOperation,
-  round,
-} from '../api/schemas.js';
-import { DougsError, errorObject } from '../output/errors.js';
-import type { Changes, Plan, PlanStep } from './types.js';
-export function satisfied(op: Operation, step: PlanStep): boolean {
-  if (step.action === 'attach')
-    return op.attachments.some(
-      (a) => a.filename === (step.name ?? uploadName(step.file)),
-    );
-  if (step.action === 'detach')
-    return !op.attachments.some((a) => a.id === step.attachmentId);
-  if (step.action === 'validate') return op.validated;
-  const s = step.set;
-  const main = op.breakdowns.filter((b) => !b.isCounterpart);
-  if (
-    main.length !== 1 &&
-    (s.category !== undefined ||
-      s.vatRate !== undefined ||
-      s.vatExempt !== undefined)
-  )
-    return false;
-  return (
-    (s.category === undefined || op.category?.id === s.category) &&
-    (s.vatRate === undefined || op.vatRate === s.vatRate) &&
-    (s.vatExempt === undefined ||
-      (op.vatExemptReason === s.vatExempt &&
-        op.vatAmount === 0 &&
-        op.amountExcludingVat === op.amount)) &&
-    (s.memo === undefined || op.memo === s.memo)
-  );
+import { isAbsolute, resolve } from 'node:path';
+import type { Dougs } from '../api/dougs.js';
+import { EXEMPTION_VALUES, normalizeOperation, percentToRate } from '../api/normalize.js';
+import type { Operation, RawBreakdown, RawOperation } from '../api/schemas.js';
+import { DougsError, ExitCode, errorPayload } from '../output/errors.js';
+import { cents, vatFromGross } from '../util/money.js';
+import { describeChanges, driftedFields, isSatisfied, targetBreakdown } from './diff.js';
+import type { ApplyReport, Plan, PlanStep, SetChanges, SetStep, StepResult } from './types.js';
+
+export interface ApplyOptions {
+  dryRun?: boolean;
+  force?: boolean;
+  continueOnError?: boolean;
+  /** Directory relative attach paths are resolved against (the plan file's). */
+  baseDir?: string;
+  onResult?: (result: StepResult) => void;
 }
-export function observed(op: Operation) {
-  return {
-    category: op.category?.id ?? -1,
-    vatRate: op.vatRate,
-    vatAmount: op.vatAmount,
-    vatExemptReason: op.vatExemptReason,
-    memo: op.memo,
-    validated: op.validated,
-    amount: op.amount,
-    date: op.date,
-    attachments: op.attachments.map((a) => a.id).sort(),
-  };
+
+function rawBreakdown(raw: RawOperation, id: string): RawBreakdown {
+  const b = raw.breakdowns.find((x) => String(x.id) === id);
+  if (!b)
+    throw new DougsError('NOT_FOUND', `Breakdown ${id} disappeared from operation ${raw.id}`, {
+      exitCode: ExitCode.notFound,
+    });
+  return b;
 }
-export function stale(op: Operation, step: PlanStep): boolean {
-  const current = observed(op);
-  return Object.entries(step.expect ?? {}).some(([key, expected]) => {
-    const value = current[key as keyof typeof current];
-    if (JSON.stringify(value) === JSON.stringify(expected)) return false;
-    // A previous interrupted attempt may already have completed part of a set.
-    if (step.action === 'set') {
-      if (
-        key === 'category' &&
-        step.set.category !== undefined &&
-        value === step.set.category
-      )
-        return false;
-      if (
-        key === 'memo' &&
-        step.set.memo !== undefined &&
-        value === step.set.memo
-      )
-        return false;
-      if (
-        key === 'vatRate' &&
-        step.set.vatRate !== undefined &&
-        value === step.set.vatRate
-      )
-        return false;
-      if (
-        step.set.vatExempt &&
-        ((key === 'vatAmount' && value === 0) ||
-          (key === 'vatRate' && value === null) ||
-          (key === 'vatExemptReason' && value === step.set.vatExempt))
-      )
-        return false;
-    }
-    return true;
+
+/** Category first: an uncategorized breakdown has no associations, hence no exemption slot. */
+async function setCategory(
+  dougs: Dougs,
+  raw: RawOperation,
+  id: string,
+  category: number,
+): Promise<RawOperation> {
+  const b = rawBreakdown(raw, id);
+  if (b.categoryId === category) return raw;
+  return dougs.updateOperation(raw, {
+    ...b,
+    categoryId: category,
+    resolvedCategoryId: category,
+    resolvedCategoryPath: [category],
+    isManuallyCategorized: true,
   });
 }
-export function diff(op: Operation, step: PlanStep) {
-  return {
-    step: step.id,
-    op: op.id,
-    action: step.action,
-    why: step.why,
-    before: observed(op),
-    after:
-      step.action === 'set'
-        ? step.set
-        : step.action === 'attach'
-          ? { filename: step.name ?? uploadName(step.file) }
-          : step.action === 'detach'
-            ? { remove: step.attachmentId }
-            : { validated: true },
-  };
-}
-function main(raw: RawOperation): RawBreakdown {
-  const mains = raw.breakdowns.filter((b) => !b.isCounterpart);
-  if (mains.length !== 1)
+
+/**
+ * VAT exemption takes two passes: zeroing the VAT is what makes Dougs offer the
+ * `vatExemptionReason` association, so the reason can only be set afterwards.
+ */
+async function setExemption(
+  dougs: Dougs,
+  raw: RawOperation,
+  id: string,
+  kind: keyof typeof EXEMPTION_VALUES,
+) {
+  let b = rawBreakdown(raw, id);
+  if (b.categoryId === -1)
     throw new DougsError(
-      'SPLIT_OPERATION',
-      'Edit needs exactly one main breakdown',
-      2,
-      'inspect with ops get; edit split operations in the web app',
+      'CATEGORY_REQUIRED',
+      `Operation ${raw.id} is uncategorized; Dougs needs a category before a VAT exemption`,
+      {
+        exitCode: ExitCode.usage,
+        hint: 'add "category" to the same set step (see: dougs categories list)',
+      },
     );
-  return mains[0]!;
-}
-async function update(
-  resources: Resources,
-  raw: RawOperation,
-  b?: RawBreakdown,
-): Promise<RawOperation> {
-  await resources.client.request(
-    'POST',
-    `${resources.path(String(raw.id))}?force=true`,
-    {
-      ...raw,
-      ...(b
-        ? {
-            breakdowns: raw.breakdowns.map((x) =>
-              String(x.id) === String(b.id) ? b : x,
-            ),
-            updatedBreakdown: b,
-          }
-        : {}),
-    },
-  );
-  return resources.get(String(raw.id));
-}
-export async function setOperation(
-  resources: Resources,
-  raw: RawOperation,
-  changes: Changes,
-): Promise<void> {
   let op = raw;
-  if (changes.category !== undefined) {
-    const b = main(op);
-    op = await update(resources, op, {
-      ...b,
-      categoryId: changes.category,
-      resolvedCategoryId: changes.category,
-      resolvedCategoryPath: [changes.category],
-      isManuallyCategorized: true,
-    });
-  }
-  if (changes.vatExempt) {
-    let b = main(op);
-    if (b.categoryId === -1)
-      throw new DougsError(
-        'CATEGORY_REQUIRED',
-        'Set a category before a VAT exemption',
-        2,
-        'include --category in the same change',
-      );
-    op = await update(resources, op, {
+  if (b.vatAmount !== 0 || b.vatRate != null) {
+    op = await dougs.updateOperation(op, {
       ...b,
       manualVatAmount: 0,
       vatAmount: 0,
@@ -170,119 +74,188 @@ export async function setOperation(
       isVatAmountManuallyModified: true,
       amountExcludingTaxesWithRecoverageRate: b.amount,
     });
-    b = main(op);
-    op = await update(resources, op, {
-      ...b,
-      associationData: {
-        ...b.associationData,
-        vatExemptionReason: exemptionValues[changes.vatExempt],
-      },
-    });
-  } else if (changes.vatRate !== undefined) {
-    const b = main(op);
-    const rate = changes.vatRate / 100;
-    const vat = round(b.amount - b.amount / (1 + rate));
-    const associationData = { ...b.associationData };
-    delete associationData.vatExemptionReason;
-    op = await update(resources, op, {
-      ...b,
-      vatRate: rate,
-      manualVatAmount: vat,
-      vatAmount: vat,
-      vatAmountWithRecoverageRate: vat,
-      isVatAmountManuallyModified: true,
-      amountExcludingTaxesWithRecoverageRate: round(b.amount - vat),
-      associationData,
-    });
+    b = rawBreakdown(op, id);
   }
-  if (changes.memo !== undefined)
-    await update(resources, { ...op, memo: changes.memo });
+  if (b.associations && !b.associations.some((a) => a.name === 'vatExemptionReason'))
+    throw new DougsError(
+      'EXEMPTION_UNAVAILABLE',
+      `Dougs offers no VAT exemption for operation ${raw.id} in its current category`,
+      {
+        exitCode: ExitCode.rejected,
+        hint: 'set a purchase category that carries VAT (e.g. software, advertising) first',
+      },
+    );
+  const reason = EXEMPTION_VALUES[kind];
+  if (b.associationData?.vatExemptionReason === reason) return op;
+  return dougs.updateOperation(op, {
+    ...b,
+    associationData: { ...(b.associationData ?? {}), vatExemptionReason: reason },
+  });
 }
-export interface StepResult {
-  step: string;
-  op: string;
-  status: 'applied' | 'skipped' | 'failed' | 'dry-run';
-  reason?: string;
-  diff?: ReturnType<typeof diff>;
-  error?: ReturnType<typeof errorObject>['error'];
+
+/** Mirrors the web app's VAT edit (vatAmount + manualVatAmount), plus the rate. */
+async function setVatRate(
+  dougs: Dougs,
+  raw: RawOperation,
+  id: string,
+  percent: number,
+): Promise<RawOperation> {
+  const b = rawBreakdown(raw, id);
+  const vat = vatFromGross(b.amount, percent);
+  const associationData = { ...(b.associationData ?? {}) };
+  delete associationData.vatExemptionReason;
+  return dougs.updateOperation(raw, {
+    ...b,
+    vatRate: percent === 0 ? null : percentToRate(percent),
+    vatAmount: vat,
+    manualVatAmount: vat,
+    vatAmountWithRecoverageRate: vat,
+    isVatAmountManuallyModified: true,
+    amountExcludingTaxesWithRecoverageRate: cents(b.amount - vat),
+    associationData,
+  });
 }
-export async function execute(
-  resources: Resources,
+
+async function applySet(
+  dougs: Dougs,
+  raw: RawOperation,
+  op: Operation,
+  step: SetStep,
+): Promise<void> {
+  const id = targetBreakdown(op, step).id;
+  const s: SetChanges = step.set;
+  let current = raw;
+  if (s.category !== undefined) current = await setCategory(dougs, current, id, s.category);
+  if (s.vatExempt !== undefined) current = await setExemption(dougs, current, id, s.vatExempt);
+  if (s.vatRate !== undefined) current = await setVatRate(dougs, current, id, s.vatRate);
+  if (s.memo !== undefined && (current.memo ?? null) !== (s.memo ?? null))
+    await dougs.updateOperation({ ...current, memo: s.memo });
+}
+
+async function perform(
+  dougs: Dougs,
+  raw: RawOperation,
+  op: Operation,
   step: PlanStep,
-  o: { dryRun?: boolean; force?: boolean } = {},
+  baseDir: string,
+) {
+  switch (step.action) {
+    case 'set':
+      return applySet(dougs, raw, op, step);
+    case 'attach': {
+      const path = isAbsolute(step.file) ? step.file : resolve(baseDir, step.file);
+      return dougs.attachFiles(step.op, [{ path, name: step.name }]);
+    }
+    case 'detach':
+      return dougs.detachAttachment(step.op, step.attachmentId);
+    case 'validate':
+      await dougs.updateOperation({ ...raw, validated: true });
+  }
+}
+
+function summary(op: Operation): StepResult['operation'] {
+  return { date: op.date, wording: op.wording, amount: op.amount, direction: op.direction };
+}
+
+/** Execute one step: re-read, skip if satisfied or drifted, write, verify. */
+export async function executeStep(
+  dougs: Dougs,
+  step: PlanStep,
+  options: ApplyOptions = {},
 ): Promise<StepResult> {
-  const raw = await resources.get(step.op);
-  const op = normalizeOperation(raw, resources.company);
-  const base = { step: step.id, op: step.op };
-  if (satisfied(op, step))
-    return { ...base, status: 'skipped', reason: 'already satisfied' };
-  if (stale(op, step) && !o.force)
+  const base = { step: step.id, op: step.op, action: step.action, why: step.why };
+  const { raw, op } = await dougs.getOperation(step.op);
+  const result = { ...base, operation: summary(op), changes: describeChanges(op, step) };
+  if (isSatisfied(op, step))
+    return { ...result, changes: [], status: 'skipped', reason: 'already satisfied' };
+  const drift = driftedFields(op, step);
+  if (drift.length && !options.force)
     return {
-      ...base,
+      ...result,
       status: 'skipped',
-      reason: 'state changed since plan; review or use --force',
-      diff: diff(op, step),
+      reason: `operation changed since the plan was made (${drift.join(', ')}); review it or re-run with --force`,
     };
-  if (o.dryRun) return { ...base, status: 'dry-run', diff: diff(op, step) };
-  if (step.action === 'set') await setOperation(resources, raw, step.set);
-  else if (step.action === 'attach')
-    await resources.attach(
-      step.op,
-      step.file,
-      step.name ? basename(step.name) : undefined,
-    );
-  else if (step.action === 'detach')
-    await resources.client.request(
-      'DELETE',
-      `${resources.path(step.op)}/source-document-attachments/${step.attachmentId}`,
-    );
-  else await update(resources, { ...raw, validated: true });
-  const after = normalizeOperation(
-    await resources.get(step.op),
-    resources.company,
-  );
-  if (!satisfied(after, step))
+  if (options.dryRun) return { ...result, status: 'planned' };
+
+  await perform(dougs, raw, op, step, options.baseDir ?? process.cwd());
+  const after = normalizeOperation(await dougs.getRaw(step.op), { company: dougs.company });
+  if (!isSatisfied(after, step))
     throw new DougsError(
       'VERIFY_FAILED',
-      'API accepted the request but the requested state was not observed',
-      5,
-      're-read the operation before retrying',
+      `Dougs accepted the change to operation ${step.op}, but re-reading it does not show it`,
+      {
+        exitCode: ExitCode.rejected,
+        hint: 'inspect it with: dougs ops get <id>; Dougs may process attachments asynchronously',
+      },
     );
-  return { ...base, status: 'applied', diff: diff(op, step) };
+  return { ...result, status: 'applied' };
 }
+
+/** Run a plan step by step. Stops at the first failure unless continueOnError. */
 export async function applyPlan(
-  resources: Resources,
+  dougs: Dougs,
   plan: Plan,
-  o: { dryRun?: boolean; force?: boolean; continueOnError?: boolean } = {},
-) {
-  if (plan.company !== resources.company)
+  options: ApplyOptions = {},
+): Promise<ApplyReport> {
+  if (plan.company !== dougs.company)
     throw new DougsError(
       'COMPANY_MISMATCH',
-      'Plan company differs from selected company',
-      2,
-      'select the plan company explicitly',
+      `Plan is for company ${plan.company}, but company ${dougs.company} is selected`,
+      {
+        exitCode: ExitCode.usage,
+        hint: `re-run with --company ${plan.company}`,
+      },
     );
+  const startedAt = new Date().toISOString();
   const results: StepResult[] = [];
+  let stopped = false;
   for (const step of plan.steps) {
-    try {
-      results.push(await execute(resources, step, o));
-    } catch (error) {
-      results.push({
+    let result: StepResult;
+    if (stopped) {
+      result = {
         step: step.id,
         op: step.op,
-        status: 'failed',
-        error: errorObject(error).error,
-      });
-      if (!o.continueOnError) break;
+        action: step.action,
+        why: step.why,
+        changes: [],
+        status: 'pending',
+        reason: 'not attempted after an earlier failure',
+      };
+    } else {
+      try {
+        result = await executeStep(dougs, step, options);
+      } catch (error) {
+        const { error: e } = errorPayload(error);
+        result = {
+          step: step.id,
+          op: step.op,
+          action: step.action,
+          why: step.why,
+          changes: [],
+          status: 'failed',
+          error: e,
+        };
+        if (!options.continueOnError) stopped = true;
+      }
     }
+    results.push(result);
+    options.onResult?.(result);
   }
+  const count = (status: StepResult['status']) => results.filter((r) => r.status === status).length;
   return {
-    results,
     meta: {
-      applied: results.filter((r) => r.status === 'applied').length,
-      skipped: results.filter((r) => r.status === 'skipped').length,
-      failed: results.filter((r) => r.status === 'failed').length,
-      pending: plan.steps.length - results.length,
+      company: plan.company,
+      createdBy: plan.createdBy,
+      dryRun: !!options.dryRun,
+      total: plan.steps.length,
+      applied: count('applied'),
+      planned: count('planned'),
+      skipped: count('skipped'),
+      failed: count('failed'),
+      pending: count('pending'),
+      startedAt,
+      finishedAt: new Date().toISOString(),
     },
+    results,
   };
 }

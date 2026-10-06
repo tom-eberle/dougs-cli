@@ -1,57 +1,77 @@
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { DougsError } from '../output/errors.js';
-export const browserSchema = z.enum(['chrome', 'brave', 'edge', 'arc']);
+import { DougsError, ExitCode } from '../output/errors.js';
+
+export const BROWSERS = ['chrome', 'brave', 'edge', 'arc'] as const;
+export const browserSchema = z.enum(BROWSERS);
 export type Browser = z.infer<typeof browserSchema>;
+
+export const credentialSourceSchema = z.enum(['token', ...BROWSERS]);
+export type CredentialSource = z.infer<typeof credentialSourceSchema>;
+
 const profileSchema = z.object({
   session: z.string().optional(),
-  source: z.enum(['token', 'chrome', 'brave', 'edge', 'arc']).optional(),
+  source: credentialSourceSchema.optional(),
   companyId: z.string().optional(),
+  savedAt: z.string().optional(),
 });
+export type Profile = z.infer<typeof profileSchema>;
+
 const configSchema = z.object({
-  profiles: z.record(z.string(), profileSchema),
-  activeProfile: z.string(),
+  profiles: z.record(z.string(), profileSchema).default({}),
+  activeProfile: z.string().default('default'),
 });
 export type Config = z.infer<typeof configSchema>;
-export type Profile = z.infer<typeof profileSchema>;
-export const configPath = () =>
-  join(
-    process.env.XDG_CONFIG_HOME || join(homedir(), '.config'),
-    'dougs-cli',
-    'config.json',
-  );
-let ephemeralConfig: Config = { profiles: {}, activeProfile: 'default' };
-export async function readConfig(): Promise<Config> {
-  if (process.env.DOUGS_EPHEMERAL === '1') return ephemeralConfig;
+
+export type Env = Record<string, string | undefined>;
+
+export function configDir(env: Env = process.env): string {
+  return join(env.XDG_CONFIG_HOME || join(homedir(), '.config'), 'dougs-cli');
+}
+
+export function cacheDir(env: Env = process.env): string {
+  return join(env.XDG_CACHE_HOME || join(homedir(), '.cache'), 'dougs-cli');
+}
+
+export function configPath(env: Env = process.env): string {
+  return join(configDir(env), 'config.json');
+}
+
+export async function readConfig(env: Env = process.env): Promise<Config> {
+  const path = configPath(env);
+  let text: string;
   try {
-    return configSchema.parse(JSON.parse(await readFile(configPath(), 'utf8')));
+    text = await readFile(path, 'utf8');
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT')
       return { profiles: {}, activeProfile: 'default' };
-    throw new DougsError(
-      'CONFIG_INVALID',
-      'Cannot read config',
-      2,
-      `check ${configPath()}`,
-    );
+    throw e;
   }
+  const parsed = configSchema.safeParse(JSON.parse(text));
+  if (!parsed.success)
+    throw new DougsError('CONFIG_INVALID', `Config file is not valid: ${path}`, {
+      exitCode: ExitCode.usage,
+      hint: 'fix or delete the file, then run dougs login again',
+    });
+  return parsed.data;
 }
-export async function writeConfig(config: Config): Promise<void> {
-  if (process.env.DOUGS_EPHEMERAL === '1') {
-    ephemeralConfig = config;
-    return;
-  }
-  const path = configPath();
-  await mkdir(join(path, '..'), { recursive: true, mode: 0o700 });
+
+/** Atomic write with 0600 permissions; the file holds a session cookie. */
+export async function writeConfig(config: Config, env: Env = process.env): Promise<void> {
+  const path = configPath(env);
+  await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temp = `${path}.${process.pid}.tmp`;
-  await writeFile(temp, `${JSON.stringify(config, null, 2)}\n`, {
-    mode: 0o600,
-  });
+  await writeFile(temp, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
   await chmod(temp, 0o600);
   await rename(temp, path);
 }
-export function profileName(config: Config, explicit?: string): string {
-  return explicit || process.env.DOUGS_PROFILE || config.activeProfile;
+
+export function activeProfileName(
+  config: Config,
+  explicit: string | undefined,
+  env: Env = process.env,
+): string {
+  return explicit || env.DOUGS_PROFILE || config.activeProfile || 'default';
 }

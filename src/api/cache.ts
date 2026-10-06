@@ -1,41 +1,51 @@
-import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+
+/**
+ * Per-company JSON/text cache under ~/.cache/dougs-cli/<company>/.
+ * Only immutable or slowly changing reference data lives here; never sessions.
+ */
 export class Cache {
   constructor(
-    private company: string,
-    private enabled = true,
+    private readonly root: string,
+    private readonly enabled = true,
   ) {}
-  private path(key: string): string {
-    return join(
-      process.env.XDG_CACHE_HOME || join(homedir(), '.cache'),
-      'dougs-cli',
-      this.company,
-      `${createHash('sha256').update(key).digest('hex')}.json`,
-    );
+
+  private file(key: string): string {
+    const safe = key.replace(/[^A-Za-z0-9._-]+/g, '_');
+    return join(this.root, safe);
   }
-  async get(
-    key: string,
-    ttl = Number.POSITIVE_INFINITY,
-  ): Promise<unknown | undefined> {
-    if (!this.enabled) return;
+
+  async getText(key: string, ttlMs = Number.POSITIVE_INFINITY): Promise<string | undefined> {
+    if (!this.enabled) return undefined;
     try {
-      const data = JSON.parse(await readFile(this.path(key), 'utf8')) as {
+      const raw = JSON.parse(await readFile(this.file(key), 'utf8')) as {
         at: number;
-        value: unknown;
+        value: string;
       };
-      if (Date.now() - data.at <= ttl) return data.value;
+      return Date.now() - raw.at <= ttlMs ? raw.value : undefined;
     } catch {
-      /* Cache misses are harmless. */
+      return undefined;
     }
   }
-  async set(key: string, value: unknown): Promise<void> {
+
+  async getJson<T>(key: string, ttlMs?: number): Promise<T | undefined> {
+    const text = await this.getText(key, ttlMs);
+    return text === undefined ? undefined : (JSON.parse(text) as T);
+  }
+
+  async setText(key: string, value: string): Promise<void> {
     if (!this.enabled) return;
-    const path = this.path(key);
-    await mkdir(join(path, '..'), { recursive: true, mode: 0o700 });
-    await writeFile(path, JSON.stringify({ at: Date.now(), value }), {
-      mode: 0o600,
-    });
+    const path = this.file(key);
+    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
+    const temp = `${path}.${process.pid}.tmp`;
+    await writeFile(temp, JSON.stringify({ at: Date.now(), value }), { mode: 0o600 });
+    await rename(temp, path);
+  }
+
+  async setJson(key: string, value: unknown): Promise<void> {
+    await this.setText(key, JSON.stringify(value));
   }
 }
+
+export const DAY = 86_400_000;
