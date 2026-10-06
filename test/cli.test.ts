@@ -381,4 +381,16 @@ describe('self-description', () => {
     expect(report.ok).toBe(true);
     expect(report.schema.unknownFields).toContain('brandNewField');
   });
+
+  it('doctor fails with exit 6 when a required field disappears', async () => {
+    const api = sample();
+    delete (api.ops.get('102') as unknown as Record<string, unknown>).wording;
+    const r = await runCli(api, ['doctor']);
+    expect(r.code).toBe(6);
+    const report = r.json() as { ok: boolean; schema: { valid: boolean; missingFields: string[] } };
+    expect(report).toMatchObject({
+      ok: false,
+      schema: { valid: false, missingFields: ['wording'] },
+    });
+  });
 });

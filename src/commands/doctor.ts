@@ -35,6 +35,15 @@ const KNOWN_BREAKDOWN_FIELDS = new Set(
   ),
 );
 
+/** Fields the CLI cannot work without (optional ones may legitimately be absent). */
+function requiredKeys(shape: Record<string, z.ZodType>): string[] {
+  return Object.entries(shape)
+    .filter(([, field]) => !field.safeParse(undefined).success)
+    .map(([key]) => key);
+}
+const REQUIRED_OPERATION_FIELDS = requiredKeys(rawOperationSchema.shape);
+const REQUIRED_BREAKDOWN_FIELDS = requiredKeys(rawBreakdownSchema.shape);
+
 interface Check {
   name: string;
   ok: boolean;
@@ -53,13 +62,12 @@ export function schemaDrift(samples: unknown[]) {
     if (typeof sample !== 'object' || sample === null) return;
     const op = sample as Record<string, unknown>;
     for (const key of Object.keys(op)) if (!KNOWN_OPERATION_FIELDS.has(key)) unknownFields.add(key);
-    for (const key of Object.keys(rawOperationSchema.shape))
-      if (!(key in op)) missingFields.add(key);
+    for (const key of REQUIRED_OPERATION_FIELDS) if (!(key in op)) missingFields.add(key);
     for (const b of Array.isArray(op.breakdowns) ? op.breakdowns : []) {
       if (typeof b !== 'object' || b === null) continue;
       for (const key of Object.keys(b))
         if (!KNOWN_BREAKDOWN_FIELDS.has(key)) unknownFields.add(`breakdowns[].${key}`);
-      for (const key of Object.keys(rawBreakdownSchema.shape))
+      for (const key of REQUIRED_BREAKDOWN_FIELDS)
         if (!(key in b)) missingFields.add(`breakdowns[].${key}`);
     }
   });
