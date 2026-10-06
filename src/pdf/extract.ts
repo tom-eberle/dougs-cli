@@ -47,7 +47,7 @@ export function parseAmount(raw: string): number | null {
 }
 
 const TOTAL_LABEL =
-  /(total\s*(?:ttc|toutes\s*taxes|due|amount|à\s*payer|a\s*payer|paid|incl\.?\s*(?:vat|tax))?|amount\s*(?:due|paid|charged)|montant\s*(?:ttc|total|dû|du|à\s*payer|a\s*payer)?|net\s*à\s*payer|grand\s*total|balance\s*due|you\s*paid)/i;
+  /((?<!sous[\s-]?|sub[\s-]?)total\s*(?:ttc|toutes\s*taxes|due|amount|à\s*payer|a\s*payer|paid|incl\.?\s*(?:vat|tax))?|amount\s*(?:due|paid|charged)|montant\s*(?:ttc|total|dû|du|à\s*payer|a\s*payer)?|net\s*à\s*payer|grand\s*total|balance\s*due|you\s*paid)/i;
 const VAT_LABEL = /\b(tva|vat|tax|mwst|ust|iva)\b/i;
 
 function amountsIn(line: string): number[] {

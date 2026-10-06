@@ -46,7 +46,7 @@ export function operationUrl(company: string, opId: string): string {
   return `${DEFAULT_API_BASE}/app/c/${company}/accounting/operations/payments?operationId=${opId}`;
 }
 
-function normalizeBreakdown(b: RawBreakdown): Breakdown {
+function normalizeBreakdown(b: RawBreakdown, opInbound: boolean): Breakdown {
   const uncategorized = b.categoryId === -1;
   const group = b.categoryGroup?.name;
   const name = b.categoryWording ?? '';
@@ -54,6 +54,7 @@ function normalizeBreakdown(b: RawBreakdown): Breakdown {
     id: String(b.id),
     isCounterpart: b.isCounterpart,
     section: b.section ?? null,
+    direction: (b.isInbound ?? opInbound) ? 'income' : 'expense',
     category: uncategorized
       ? null
       : { id: b.categoryId, name, path: group ? [group, name] : [name] },
@@ -85,7 +86,7 @@ export interface NormalizeContext {
 }
 
 export function normalizeOperation(raw: RawOperation, ctx: NormalizeContext): Operation {
-  const breakdowns = raw.breakdowns.map(normalizeBreakdown);
+  const breakdowns = raw.breakdowns.map((b) => normalizeBreakdown(b, raw.isInbound));
   const mains = breakdowns.filter((b) => !b.isCounterpart);
   const main = mains.length === 1 ? mains[0] : undefined;
   const tx = raw.transaction;
@@ -140,7 +141,12 @@ export function normalizeCategory(c: RawCategory): Category {
     group,
     path: group ? [group, c.wording] : [c.wording],
     direction: c.isInbound == null ? 'both' : c.isInbound ? 'income' : 'expense',
-    accountingNumber: c.accountingNumber == null ? null : String(c.accountingNumber),
+    accountingNumber:
+      c.accountingNumber != null
+        ? String(c.accountingNumber)
+        : c.resolvedAccountingNumbers?.length
+          ? String(c.resolvedAccountingNumbers[0])
+          : null,
     defaultVatRate: typeof c.vat?.rate === 'number' ? rateToPercent(c.vat.rate) : null,
     vatOptional: c.vat?.isOptional ?? false,
   };

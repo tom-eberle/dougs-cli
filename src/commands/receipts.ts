@@ -138,7 +138,12 @@ export function registerReceiptsCommands(program: Command): void {
         });
       ctx.out.info(style.dim(`Reading ${files.length} document(s)…`));
       const docs = await mapLimit(files, 4, readReceipt);
-      const dates = docs.flatMap((d) => d.dates).sort();
+      // Old dates in a document (contract start, registration…) should not widen the search window.
+      const recent = addDays(today(), -3 * 365);
+      const dates = docs
+        .flatMap((d) => d.dates)
+        .filter((d) => d >= recent)
+        .sort();
       const range = rangeOf(o);
       const from =
         range.from ??

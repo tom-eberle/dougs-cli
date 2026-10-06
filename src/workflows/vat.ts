@@ -329,6 +329,16 @@ export type VatSummary = z.infer<typeof vatSummarySchema>;
 
 const SELF_ASSESSED_RATE = 20;
 
+/**
+ * Only revenue (PCG class 7) counts as a non-taxable sale; other untaxed income
+ * (transfers between accounts, capital, loans, refunds) is not a CA3 line.
+ */
+function isRevenue(categoryId: number | undefined, categories?: CategoryIndex): boolean {
+  if (!categories) return true;
+  const account = categoryId === undefined ? null : categories.get(categoryId)?.accountingNumber;
+  return !!account?.startsWith('7');
+}
+
 /** Compute CA3 boxes (in EUR, cents) from the month's operations. */
 export function estimateCa3(
   ops: readonly Operation[],
@@ -343,13 +353,13 @@ export function estimateCa3(
   for (const op of ops) {
     for (const b of op.breakdowns) {
       if (b.isCounterpart) continue;
-      if (op.direction === 'income') {
+      if (b.direction === 'income') {
         if (b.vatAmount > 0 && b.vatRate) {
           const bucket = collected.get(b.vatRate) ?? { base: 0, vat: 0 };
           bucket.base += b.amountExcludingVat;
           bucket.vat += b.vatAmount;
           collected.set(b.vatRate, bucket);
-        } else nonTaxable += b.amount;
+        } else if (isRevenue(b.category?.id, categories)) nonTaxable += b.amount;
         continue;
       }
       if (b.vatExemptReason === 'inside-eu') rc.eu += b.amount;

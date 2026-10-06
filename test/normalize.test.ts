@@ -94,4 +94,19 @@ describe('normalizeCategory', () => {
     });
     expect(sales).toMatchObject({ direction: 'income', accountingNumber: '706000' });
   });
+
+  it('falls back to resolved accounting numbers and ignores keyword VAT rates', () => {
+    const c = normalizeCategory({
+      id: 900,
+      wording: 'Ventes exonérées',
+      accountingNumber: null,
+      resolvedAccountingNumbers: ['706230', '706240'],
+      vat: { rate: 'fromEuCountries' },
+    });
+    expect(c).toMatchObject({
+      accountingNumber: '706230',
+      defaultVatRate: null,
+      direction: 'both',
+    });
+  });
 });

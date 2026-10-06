@@ -87,6 +87,14 @@ const REASON_TITLES: Record<string, string> = {
   DOCUMENT_VAT_MISMATCH: 'Invoice VAT ≠ booked VAT',
 };
 
+const TODO_SUMMARY: Record<(typeof TODO_REASONS)[number], string> = {
+  MISSING_RECEIPT: 'missing receipts',
+  UNCATEGORIZED: 'uncategorized',
+  UNVALIDATED: 'to validate',
+  VAT_SUSPECT: 'VAT to check',
+  RULE_MATCH: 'rule matches',
+};
+
 function renderTodo(items: readonly TodoItem[]): string {
   if (!items.length) return style.green('✓ Nothing to do.');
   const counts = countByReason(items);
@@ -131,7 +139,7 @@ function renderTodo(items: readonly TodoItem[]): string {
     );
   }
   const summary = TODO_REASONS.filter((r) => counts[r]).map(
-    (r) => `${counts[r]} ${REASON_TITLES[r]?.toLowerCase()}`,
+    (r) => `${counts[r]} ${TODO_SUMMARY[r]}`,
   );
   blocks.push(
     style.dim(`${plural(items.length, 'operation')} need attention: ${summary.join(' · ')}`),

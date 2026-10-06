@@ -4,7 +4,7 @@ import type { Operation } from '../api/schemas.js';
 import { mapLimit } from '../util/concurrency.js';
 import { daysBetween } from '../util/dates.js';
 import { sameCents } from '../util/money.js';
-import { merchantKey } from '../util/text.js';
+import { merchantKey, normalizeText } from '../util/text.js';
 import {
   type CategoryIndex,
   type Finding,
@@ -56,10 +56,13 @@ export function findDuplicates(ops: readonly Operation[]): Finding[] {
       const pair = `${a.id}:${b.id}`;
       if (reported.has(pair)) continue;
       reported.add(pair);
+      // Same day and identical wording looks like a double import; otherwise it is
+      // often legitimate (threshold billing, repeated payouts), so only informational.
+      const twin = a.date === b.date && normalizeText(a.wording) === normalizeText(b.wording);
       findings.push({
         code: 'POSSIBLE_DUPLICATE',
-        severity: 'warning',
-        detail: `same amount (${a.amount.toFixed(2)} €) and merchant as operation ${a.id} on ${a.date}`,
+        severity: twin ? 'warning' : 'info',
+        detail: `same amount (${a.amount.toFixed(2)} €) and merchant as operation ${a.id} on ${a.date}${twin ? ', same wording' : ''}`,
         op: b,
         related: [a.id],
       });
@@ -68,23 +71,24 @@ export function findDuplicates(ops: readonly Operation[]): Finding[] {
   return findings;
 }
 
-/** The attached document's total matches none of TTC, HT or the original-currency amount. */
+/**
+ * The attached document's total matches none of TTC, HT or the original-currency
+ * amount. A foreign-currency document can only be checked against the bank's
+ * original amount in that currency; without one, the conversion is unknown.
+ */
 export function documentAmountMismatch(op: Operation, ev: DocumentEvidence | null): Finding | null {
   if (!ev?.totals.length) return null;
-  const targets = [op.amount, op.amountExcludingVat, op.original?.amount].filter(
-    (v): v is number => v != null,
-  );
-  const fxTolerance = (ev.currency ?? 'EUR') !== 'EUR' ? 0.03 : 0;
-  const ok = ev.totals.some((t) =>
-    targets.some(
-      (target) => sameCents(t, target, 0.05) || Math.abs(t - target) <= target * fxTolerance,
-    ),
-  );
-  if (ok) return null;
+  const currency = ev.currency ?? 'EUR';
+  let targets: number[];
+  if (currency === 'EUR')
+    targets = [op.amount, op.amountExcludingVat].filter((v): v is number => v != null);
+  else if (op.original?.currency === currency) targets = [op.original.amount];
+  else return null;
+  if (ev.totals.some((t) => targets.some((target) => sameCents(t, target, 0.05)))) return null;
   return {
     code: 'DOCUMENT_AMOUNT_MISMATCH',
     severity: 'warning',
-    detail: `attached document total ${ev.totals[0]!.toFixed(2)}${ev.currency ? ` ${ev.currency}` : ''} ≠ operation ${op.amount.toFixed(2)} €; wrong document attached?`,
+    detail: `attached document total ${ev.totals[0]!.toFixed(2)} ${currency} ≠ operation ${targets[0]!.toFixed(2)} ${currency === 'EUR' ? '€' : currency}; wrong or partial document?`,
     op,
     evidence: { document: ev },
   };

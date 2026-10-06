@@ -114,6 +114,10 @@ export const rawCategorySchema = z.looseObject({
   isInbound: z.boolean().nullable().optional(),
   parentId: z.number().nullable().optional(),
   accountingNumber: z.union([z.number(), z.string()]).nullable().optional(),
+  resolvedAccountingNumbers: z
+    .array(z.union([z.number(), z.string()]))
+    .nullable()
+    .optional(),
   group: z.looseObject({ name: z.string().optional() }).nullable().optional(),
   vat: z
     .looseObject({
@@ -212,6 +216,9 @@ export const breakdownSchema = z.object({
   id: z.string(),
   isCounterpart: z.boolean(),
   section: z.string().nullable(),
+  direction: z
+    .enum(['expense', 'income'])
+    .describe('Can differ from the operation (e.g. fees inside a payout)'),
   category: categoryRefSchema.nullable().describe('null when uncategorized (Dougs categoryId -1)'),
   amount: z.number().describe('Gross amount (TTC) in EUR'),
   amountExcludingVat: z.number().describe('Net amount (HT) in EUR'),
