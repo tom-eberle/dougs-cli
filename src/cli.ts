@@ -1,6 +1,7 @@
 import { Command, CommanderError } from 'commander';
 import { z } from 'zod';
 import { example, registerCore } from './commands/core.js';
+import { registerResources } from './commands/resources.js';
 import { DougsError, errorObject } from './output/errors.js';
 import { isJson } from './output/format.js';
 
@@ -25,6 +26,7 @@ example(
   'apply receipts.plan.json --dry-run',
 );
 registerCore(program);
+registerResources(program);
 process.stdout.on('error', (e: NodeJS.ErrnoException) => {
   if (e.code === 'EPIPE') process.exit(0);
   else throw e;

@@ -25,6 +25,7 @@ export interface Context {
 }
 const rawUser = z.looseObject({
   id: z.union([z.string(), z.number()]),
+  profile: z.looseObject({ fullName: z.string().optional() }).optional(),
   firstName: z.string().nullable().optional(),
   lastName: z.string().nullable().optional(),
   name: z.string().nullable().optional(),
@@ -35,6 +36,8 @@ const rawUser = z.looseObject({
         id: z.union([z.string(), z.number()]),
         name: z.string().optional(),
         businessName: z.string().optional(),
+        fullName: z.string().optional(),
+        legalName: z.string().optional(),
       }),
     )
     .optional(),
@@ -81,13 +84,15 @@ export async function identity(options: GlobalOptions) {
         id: z.union([z.string(), z.number()]),
         name: z.string().optional(),
         businessName: z.string().optional(),
+        fullName: z.string().optional(),
+        legalName: z.string().optional(),
       }),
     )
     .parse(await auth.client.request('GET', `/users/${raw.id}/companies`));
   const companies = listed.map((c) =>
     companySchema.parse({
       id: String(c.id),
-      name: c.name ?? c.businessName ?? '',
+      name: c.name ?? c.businessName ?? c.fullName ?? c.legalName ?? '',
     }),
   );
   const company =
@@ -99,6 +104,7 @@ export async function identity(options: GlobalOptions) {
     id: String(raw.id),
     name:
       raw.name ??
+      raw.profile?.fullName ??
       ([raw.firstName, raw.lastName].filter(Boolean).join(' ') || null),
     email: raw.email ?? null,
   });
