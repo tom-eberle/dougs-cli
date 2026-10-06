@@ -810,14 +810,17 @@ describe('re-review R items', () => {
 });
 
 describe('VAT exemption reasons', () => {
-  it('normalizes every purchase reason Dougs offers to a short name, leaving sales values raw', () => {
+  it('normalizes purchase and sales reasons to short names, unknown values stay raw', () => {
     const kinds = {
       'exemption:outbound:outsideEuropeanUnion': 'outside-eu',
       'exemption:outbound:insideEuropeanUnion': 'inside-eu',
       'exemption:outbound:outsideEuropeanUnionNotImported': 'outside-eu-not-imported',
       'exemption:outbound:nonApplicable': 'not-applicable',
       'exemption:outbound:noAccountingDocument': 'no-document',
-      'exemption:inbound:nonApplicable': 'exemption:inbound:nonApplicable',
+      'exemption:inbound:outsideEuropeanUnion': 'outside-eu',
+      'exemption:inbound:insideEuropeanUnion': 'inside-eu',
+      'exemption:inbound:nonApplicable': 'not-applicable',
+      'exemption:inbound:someFutureReason': 'exemption:inbound:someFutureReason',
     };
     for (const [raw, kind] of Object.entries(kinds))
       expect(op({ exemption: raw }).vatExemptReason, raw).toBe(kind);
@@ -871,25 +874,46 @@ describe('VAT exemption reasons', () => {
     expect(outcome.success).toBe(true);
   });
 
-  it('refuses a purchase exemption on a sales line, but allows it on a supplier refund', async () => {
-    const sale = rawOp({ id: 410, income: true, category: 'sales', amount: 120 });
-    const refund = rawOp({ id: 411, income: true, refund: true, amount: 120 });
+  it('sales lines get the inbound value; purchase-only reasons are refused there', async () => {
+    // A B2B service sold outside the EU (e.g. to a UAE company).
+    const sale = rawOp({
+      id: 410,
+      income: true,
+      category: 'sales',
+      amount: 1000,
+      vatRate: 20,
+      validated: false,
+    });
+    const refund = rawOp({ id: 411, income: true, refund: true, amount: 120, validated: false });
     const api = new FakeDougs([sale, refund]);
     const r = await runCli(api, ['ops', 'set', '410', '--vat-exempt', 'outside-eu', '--yes']);
-    expect([r.code, r.error().code]).toEqual([2, 'SALES_EXEMPTION_UNSUPPORTED']);
-    const preview = await runCli(api, [
+    expect(r.code).toBe(0);
+    const reasons = api.writes.map(
+      (w) => (w.body as RawOpFixture).breakdowns[0]!.associationData.vatExemptionReason,
+    );
+    expect(reasons.at(-1)).toBe('exemption:inbound:outsideEuropeanUnion');
+    expect(toOp(api.ops.get('410')!)).toMatchObject({
+      vatAmount: 0,
+      vatExemptReason: 'outside-eu',
+    });
+
+    const noDoc = await runCli(api, [
       'ops',
       'set',
       '410',
       '--vat-exempt',
-      'outside-eu',
+      'no-document',
       '--dry-run',
     ]);
-    expect(preview.error().code).toBe('SALES_EXEMPTION_UNSUPPORTED');
-    expect(api.writes).toHaveLength(0);
+    expect([noDoc.code, noDoc.error().code]).toEqual([2, 'SALES_EXEMPTION_UNSUPPORTED']);
+
+    // A supplier refund is a purchase line: it gets the outbound value.
     expect(
       (await runCli(api, ['ops', 'set', '411', '--vat-exempt', 'not-applicable', '--yes'])).code,
     ).toBe(0);
+    expect(api.ops.get('411')!.breakdowns[0]!.associationData.vatExemptionReason).toBe(
+      'exemption:outbound:nonApplicable',
+    );
   });
 });
 
@@ -1109,5 +1133,48 @@ describe('plans never contain steps apply would refuse', () => {
       notPlannable: [{ op: '620', code: 'LOCKED' }],
     });
     expect(JSON.parse(readFileSync(plan, 'utf8')).steps).toEqual([]);
+  });
+});
+
+describe('movements that never need a receipt', () => {
+  it('classifies categories by accounting class', () => {
+    expect(categories.get(702)).toMatchObject({ needsDocument: false }); // 58 transfer
+    expect(categories.get(703)).toMatchObject({ needsDocument: false }); // associate account
+    expect(categories.get(704)).toMatchObject({ needsDocument: false }); // 16 loan
+    expect(categories.get(705)).toMatchObject({ needsDocument: true }); // taxes: 631 needs one
+    expect(categories.get(77)).toMatchObject({ needsDocument: true });
+  });
+
+  it('todo and close-check skip them by default; --strict includes them', async () => {
+    const ops = () =>
+      new FakeDougs([
+        rawOp({ id: 700, date: '2025-06-01', category: 'transfer', vatRate: null, amount: 5000 }),
+        rawOp({ id: 701, date: '2025-06-02', category: 'loan', vatRate: null, amount: 900 }),
+        rawOp({
+          id: 702,
+          date: '2025-06-03',
+          category: 'ownerContribution',
+          vatRate: null,
+          amount: 300,
+        }),
+        rawOp({ id: 703, date: '2025-06-04', wording: 'FICTIONAL SHOP', amount: 40 }),
+      ]);
+    const missing = (items: { op: { id: string } | null; reasons: { code: string }[] }[]) =>
+      items.filter((i) => i.reasons.some((r) => r.code === 'MISSING_RECEIPT')).map((i) => i.op?.id);
+    expect(missing((await runCli(ops(), ['todo'])).json() as never)).toEqual(['703']);
+    expect(missing((await runCli(ops(), ['todo', '--strict'])).json() as never).sort()).toEqual([
+      '700',
+      '701',
+      '702',
+      '703',
+    ]);
+    const close = (
+      await runCli(ops(), ['close-check', '--year', '2025', '--no-documents'])
+    ).json() as { meta: { counts: Record<string, number> } };
+    expect(close.meta.counts.MISSING_RECEIPT).toBe(1);
+    const strict = (
+      await runCli(ops(), ['close-check', '--year', '2025', '--no-documents', '--strict'])
+    ).json() as { meta: { counts: Record<string, number> } };
+    expect(strict.meta.counts.MISSING_RECEIPT).toBe(4);
   });
 });

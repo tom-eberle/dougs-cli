@@ -334,6 +334,12 @@ export const categorySchema = z.object({
       'False for categories outside VAT (bank fees, transfers, salaries, taxes…); a line may still opt in',
     ),
   vatOptional: z.boolean(),
+  accountingNumbers: z.array(z.string()).describe('Every PCG account the category books to'),
+  needsDocument: z
+    .boolean()
+    .describe(
+      'False for movements that never need a receipt (transfers, capital, loans, subsidies, FX, tax settlements)',
+    ),
 });
 export type Category = z.infer<typeof categorySchema>;
 

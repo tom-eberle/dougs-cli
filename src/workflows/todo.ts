@@ -54,12 +54,18 @@ export interface TodoOptions {
   declarations?: readonly DeclarationSummary[];
   /** Also suggest fixes backed by weak evidence (warning-level findings). */
   includeWarnings?: boolean;
+  /** Ask for receipts on transfers, loans, capital… too (see ReceiptPolicy). */
+  strict?: boolean;
 }
 
 /** Cheap, local checks only (no document downloads) so the worklist stays fast. */
 export function buildTodo(records: readonly OperationRecord[], options: TodoOptions): TodoItem[] {
   const vendors = new VendorRegistry(options.rules.vendors);
-  const policy = { noReceiptCategories: new Set(options.rules.noReceiptCategories) };
+  const policy = {
+    noReceiptCategories: new Set(options.rules.noReceiptCategories),
+    categories: options.categories,
+    strict: options.strict,
+  };
   // Overdue returns first: they have deadlines and penalties.
   const items: TodoItem[] = overdueDeclarations(options.declarations ?? []).map((f) => ({
     op: null,

@@ -174,8 +174,8 @@ overdue. It is an estimate, clearly labelled as such.
 ```
 
 Match on `wording` (substring, or `/regex/flags`), `direction`, `amountMin`/`amountMax`,
-`account`; set `category`, `vatRate`, `vatExempt`, `memo`. `vatExempt` is why a purchase has no
-French VAT: `outside-eu`, `inside-eu`, `outside-eu-not-imported`, `not-applicable` (the supplier
+`account`; set `category`, `vatRate`, `vatExempt`, `memo`. `vatExempt` is why a line has no
+French VAT (on a sale: `outside-eu`, `inside-eu` or `not-applicable`); for purchases: `outside-eu`, `inside-eu`, `outside-eu-not-imported`, `not-applicable` (the supplier
 charges no VAT, e.g. a micro-entrepreneur: "TVA non applicable, art. 293 B CGI") or
 `no-document`. First match wins; only operations that
 differ get a step.
@@ -192,7 +192,8 @@ dougs categories list --search logiciel            # find category ids
 dougs close-check --year 2025
 ```
 
-Missing receipts (and > 150 € without an invoice), uncategorized and unvalidated operations, VAT
+Missing receipts (and > 150 € without an invoice; transfers between your accounts, capital, loans,
+subsidies, FX and tax settlements are skipped unless `--strict`), uncategorized and unvalidated operations, VAT
 suspects, possible duplicates and attached documents whose total does not match. Uses the Dougs
 accounting year that closes in that year (else the calendar year). Exit code 0 even with
 findings; counts are in the JSON `meta`.

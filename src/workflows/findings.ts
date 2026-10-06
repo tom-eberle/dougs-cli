@@ -121,19 +121,27 @@ const NO_RECEIPT_CATEGORY_NAMES = new Set(
 );
 
 export interface ReceiptPolicy {
+  /** Categories the user's rules file exempts (always honoured). */
   noReceiptCategories: ReadonlySet<number>;
+  /** Category metadata: movements booked to transfer/capital/loan/… accounts need no receipt. */
+  categories?: CategoryIndex;
+  /** Ask for a receipt on everything except the rules file's exemptions. */
+  strict?: boolean;
 }
 
 function needsReceipt(op: Operation, policy: ReceiptPolicy): boolean {
   if (op.direction !== 'expense' || op.amount < 1) return false;
   if (op.type?.startsWith('dispatch')) return false;
-  const mains = op.breakdowns.filter((b) => !b.isCounterpart);
-  return !mains.every(
-    (b) =>
-      b.category &&
-      (policy.noReceiptCategories.has(b.category.id) ||
-        NO_RECEIPT_CATEGORY_NAMES.has(b.category.name.toLowerCase())),
-  );
+  const exempt = (b: Operation['breakdowns'][number]) => {
+    if (!b.category) return false;
+    if (policy.noReceiptCategories.has(b.category.id)) return true;
+    if (policy.strict) return false;
+    const meta = policy.categories?.get(b.category.id);
+    return (
+      meta?.needsDocument === false || NO_RECEIPT_CATEGORY_NAMES.has(b.category.name.toLowerCase())
+    );
+  };
+  return !op.breakdowns.filter((b) => !b.isCounterpart).every(exempt);
 }
 
 export function missingReceipt(op: Operation, policy: ReceiptPolicy): Finding | null {

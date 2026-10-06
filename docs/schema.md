@@ -14,9 +14,10 @@ Conventions everywhere:
 - Amounts are EUR numbers with at most 2 decimals; amounts are **positive** and paired with a
   `direction` (`expense` | `income`).
 - VAT rates are **percent** (`20`, `5.5`, `2.1`); `null` means no rate.
-- VAT exemptions on purchases use short names — `outside-eu`, `inside-eu`,
-  `outside-eu-not-imported`, `not-applicable` (supplier charges no VAT, e.g. a French
-  micro-entrepreneur under art. 293 B CGI), `no-document` — or the raw Dougs
+- VAT exemptions use short names — `outside-eu`, `inside-eu`, `outside-eu-not-imported`,
+  `not-applicable` (supplier charges no VAT, e.g. a French micro-entrepreneur under art. 293 B
+  CGI; on sales: exempt by law), `no-document` — for purchase and sales lines alike (the line
+  decides `exemption:outbound:*` vs `exemption:inbound:*`), or the raw Dougs
   value for anything else (e.g. `exemption:inbound:outsideEuropeanUnion` on sales).
 - Ids are strings. Dates are `YYYY-MM-DD`.
 - Lists print a JSON array (`--jsonl`: one object per line). Reports print `{ "meta": …, … }`.
@@ -137,7 +138,7 @@ vatAmount, reverseCharge, totals, currency }`.
 | Step field | Notes |
 |---|---|
 | `action` | `set`, `attach`, `detach`, `validate` |
-| `set` | Any of `category` (id), `vatRate` (percent), `vatExempt` (`outside-eu`/`inside-eu`/`outside-eu-not-imported`/`not-applicable`/`no-document`, purchases only), `memo` (string or null). `vatRate` and `vatExempt` are exclusive |
+| `set` | Any of `category` (id), `vatRate` (percent), `vatExempt` (`outside-eu`/`inside-eu`/`outside-eu-not-imported`/`not-applicable`/`no-document`; on sales lines only the first three and `not-applicable`), `memo` (string or null). `vatRate` and `vatExempt` are exclusive |
 | `breakdown` | Optional breakdown id, required for split operations |
 | `file`, `name` | Attach: path relative to the plan file; display name defaults to the file name without a leading `<digits>_`. Only `.pdf .png .jpg .jpeg .heic .webp`, inside the plan's directory or the current directory (symlinks resolved) unless `apply --allow-any-path` |
 | `expect` | State seen when planning (`category` with `-1` for uncategorized, `vatRate`, `vatAmount`, `vatExemptReason`, `memo`, `validated`, `attachments` count). If it changed, `apply` skips the step unless `--force` |
@@ -175,7 +176,9 @@ did not ask for.
 - `vat check` and `rules apply` also return `notPlannable: [{ op, action, code, reason }]`: fixes
   left out of the plan because apply would refuse them (`LOCKED`, `FILED_PERIOD`,
   `EXEMPTION_UNAVAILABLE`, …), counted in `meta.notPlannable`.
-- `category` (`categories list`) includes `carriesVat`: false for categories outside VAT.
+- `category` (`categories list`) includes `carriesVat` (false for categories outside VAT),
+  `accountingNumbers` and `needsDocument` (false for transfers, capital, loans, subsidies, FX
+  and tax settlements; `MISSING_RECEIPT` skips them unless `--strict`).
 - `vat-summary`: `{ meta: { month, estimate: true, operations, unvalidated, uncategorized,
   declaration: { id, label, status, filed, dueDate, isLate, hasForm, corrective } }, collectedByRate:
   [{ rate, base, vat }], lines: [{ box, label, estimate, declared, difference }], notes }` —

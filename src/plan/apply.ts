@@ -1,7 +1,7 @@
 import type { Dougs, PeriodGuard } from '../api/dougs.js';
 import { uploadName } from '../api/dougs.js';
-import { EXEMPTION_VALUES, normalizeOperation, percentToRate } from '../api/normalize.js';
-import type { Operation, RawBreakdown, RawOperation } from '../api/schemas.js';
+import { exemptionValue, isSaleLine, normalizeOperation, percentToRate } from '../api/normalize.js';
+import type { Operation, RawBreakdown, RawOperation, VatExemptKind } from '../api/schemas.js';
 import { DougsError, ExitCode, errorPayload, toDougsError } from '../output/errors.js';
 import { vatFromGross } from '../util/money.js';
 import { readUpload, resolveUpload } from './attachments.js';
@@ -85,12 +85,7 @@ async function setCategory(
  * If the second pass turns out to be impossible, the first is rolled back so
  * deductible VAT is not silently lost.
  */
-async function setExemption(
-  dougs: Dougs,
-  raw: RawOperation,
-  id: string,
-  kind: keyof typeof EXEMPTION_VALUES,
-) {
+async function setExemption(dougs: Dougs, raw: RawOperation, id: string, kind: VatExemptKind) {
   const original = rawBreakdown(raw, id);
   let op = raw;
   let b = original;
@@ -125,7 +120,19 @@ async function setExemption(
       },
     );
   }
-  const reason = EXEMPTION_VALUES[kind];
+  const sale =
+    (original.isRefund ?? false)
+      ? !(original.isInbound ?? raw.isInbound)
+      : (original.isInbound ?? raw.isInbound);
+  const reason = exemptionValue(kind, sale);
+  if (!reason)
+    throw new DougsError(
+      'SALES_EXEMPTION_UNSUPPORTED',
+      `Operation ${raw.id}: "${kind}" only exists for purchases`,
+      {
+        exitCode: ExitCode.usage,
+      },
+    );
   if (b.associationData?.vatExemptionReason === reason) return op;
   return dougs.updateOperation(op, {
     ...b,
@@ -287,11 +294,13 @@ function guard(raw: RawOperation, op: Operation, step: PlanStep, options: ApplyO
           hint: 'add "category" to the same set step (see: dougs categories list)',
         },
       );
-    if (b.direction === 'income' && !b.isRefund)
+    // The line decides purchase (outbound) vs sale (inbound) values; some reasons
+    // only exist for purchases.
+    if (isSaleLine(b) && !exemptionValue(step.set.vatExempt, true))
       throw new DougsError(
         'SALES_EXEMPTION_UNSUPPORTED',
-        `Operation ${op.id}: vatExempt sets a purchase exemption, but this line is a sale`,
-        { exitCode: ExitCode.usage, hint: 'set sales VAT exemptions in the Dougs web app' },
+        `Operation ${op.id}: "${step.set.vatExempt}" only exists for purchases, and this line is a sale`,
+        { exitCode: ExitCode.usage, hint: 'for sales use outside-eu, inside-eu or not-applicable' },
       );
   }
   if (step.action === 'validate' && !op.validated) {

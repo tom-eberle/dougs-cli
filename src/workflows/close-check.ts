@@ -103,6 +103,7 @@ export interface CloseCheckOptions {
   categories?: CategoryIndex;
   declarations?: readonly DeclarationSummary[];
   documents: boolean;
+  strict?: boolean;
   onProgress?: (done: number, total: number) => void;
 }
 
@@ -113,7 +114,11 @@ export async function runCloseCheck(
 ): Promise<CloseCheck> {
   const ops = records.map((r) => r.op);
   const vendors = new VendorRegistry(options.rules.vendors);
-  const policy = { noReceiptCategories: new Set(options.rules.noReceiptCategories) };
+  const policy = {
+    noReceiptCategories: new Set(options.rules.noReceiptCategories),
+    categories: options.categories,
+    strict: options.strict,
+  };
   const evidence = new Map<string, DocumentEvidence | null>();
   const withDocs = options.documents
     ? ops.filter((op) => op.direction === 'expense' && op.attachments.length)

@@ -102,7 +102,8 @@ dougs ops validate 10001 --yes --json
 }
 ```
 
-- `vatExempt` (purchases only) says why there is no French VAT: `outside-eu` / `inside-eu`
+- `vatExempt` says why there is no French VAT. On a **sale** (e.g. a B2B service invoiced to a
+  company outside the EU): `outside-eu`, `inside-eu` or `not-applicable`. On a purchase: `outside-eu` / `inside-eu`
   (foreign supplier, reverse charge), `outside-eu-not-imported` (goods bought abroad, not
   imported), `not-applicable` (the supplier charges no VAT — e.g. a French micro-entrepreneur
   whose invoice says "TVA non applicable, art. 293 B du CGI"; fix this when Dougs added 20 % VAT
@@ -133,6 +134,8 @@ dougs ops validate 10001 --yes --json
   period, no exemption possible…). Report them; don't try to force them through `ops set`.
 - Zero VAT on bank fees, insurance, salaries or transfers is normal (`vatApplicable: false`):
   never add an exemption there.
+- `MISSING_RECEIPT` skips transfers between accounts, capital, loans, subsidies, FX and tax
+  settlements (`needsDocument: false` categories); use `--strict` only when asked.
 - `sideEffects` on applied steps (exit 7): Dougs changed something else too; report it to the user.
 
 ## Data notes

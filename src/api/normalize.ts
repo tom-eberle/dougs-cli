@@ -22,9 +22,33 @@ export const EXEMPTION_VALUES: Record<VatExemptKind, string> = {
   'no-document': 'exemption:outbound:noAccountingDocument',
 };
 
+/**
+ * Dougs exemption values for sales lines (`exemption:inbound:*`), by the same
+ * short names; purchases-only reasons (no-document, outside-eu-not-imported)
+ * have no sales counterpart.
+ */
+export const SALES_EXEMPTION_VALUES: Partial<Record<VatExemptKind, string>> = {
+  'outside-eu': 'exemption:inbound:outsideEuropeanUnion',
+  'inside-eu': 'exemption:inbound:insideEuropeanUnion',
+  'not-applicable': 'exemption:inbound:nonApplicable',
+};
+
+/** A sales line: income, or money paid back to a customer (refund). */
+export function isSaleLine(b: { direction: 'expense' | 'income'; isRefund: boolean }): boolean {
+  return b.isRefund ? b.direction === 'expense' : b.direction === 'income';
+}
+
+/** The Dougs value for a short name on a given line, or null if that line can't take it. */
+export function exemptionValue(kind: VatExemptKind, sale: boolean): string | null {
+  return (sale ? SALES_EXEMPTION_VALUES[kind] : EXEMPTION_VALUES[kind]) ?? null;
+}
+
 export function exemptionKind(raw: unknown): string | null {
   if (typeof raw !== 'string' || !raw) return null;
-  const known = Object.entries(EXEMPTION_VALUES).find(([, value]) => value === raw);
+  const known = [
+    ...Object.entries(EXEMPTION_VALUES),
+    ...Object.entries(SALES_EXEMPTION_VALUES),
+  ].find(([, value]) => value === raw);
   return known ? known[0] : raw;
 }
 
@@ -139,8 +163,23 @@ export function normalizeAccount(a: RawAccount): Account {
   };
 }
 
+/**
+ * PCG accounts of movements that never need a justifying document: internal
+ * transfers (58), associates' current accounts / owner contributions (455,
+ * "associateAccount"), capital (10), subsidies (13), loans (16), currency
+ * gains and losses (666, 766), tax settlements (444, 445).
+ */
+const NO_DOCUMENT_ACCOUNTS = /^(58|455|10|13|16|666|766|444|445)|^associateAccount$/;
+
 export function normalizeCategory(c: RawCategory): Category {
   const group = c.group?.name ?? null;
+  const accountingNumbers = (
+    c.resolvedAccountingNumbers?.length
+      ? c.resolvedAccountingNumbers
+      : c.accountingNumber != null
+        ? [c.accountingNumber]
+        : []
+  ).map(String);
   return {
     id: c.id,
     name: c.wording,
@@ -157,6 +196,10 @@ export function normalizeCategory(c: RawCategory): Category {
     // No VAT config, or a 0 rate: outside VAT. Keyword rates (e.g. "fromEuCountries") carry VAT.
     carriesVat: !!c.vat && (typeof c.vat.rate !== 'number' || c.vat.rate > 0),
     vatOptional: c.vat?.isOptional ?? false,
+    accountingNumbers,
+    needsDocument: !(
+      accountingNumbers.length && accountingNumbers.every((n) => NO_DOCUMENT_ACCOUNTS.test(n))
+    ),
   };
 }
 

@@ -52,8 +52,9 @@ describe('normalizeOperation', () => {
     expect(rateToPercent(0.021)).toBe(2.1);
     expect(percentToRate(5.5)).toBe(0.055);
     expect(exemptionKind('exemption:outbound:outsideEuropeanUnion')).toBe('outside-eu');
-    expect(exemptionKind('exemption:inbound:nonApplicable')).toBe(
-      'exemption:inbound:nonApplicable',
+    expect(exemptionKind('exemption:inbound:nonApplicable')).toBe('not-applicable');
+    expect(exemptionKind('exemption:outbound:someFutureReason')).toBe(
+      'exemption:outbound:someFutureReason',
     );
     const op = normalize(rawOp({ exemption: 'exemption:outbound:insideEuropeanUnion' }));
     expect(op).toMatchObject({ vatRate: null, vatAmount: 0, vatExemptReason: 'inside-eu' });

@@ -7,6 +7,10 @@ All notable changes to this project are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- Sales VAT exemptions: on sales lines `--vat-exempt outside-eu | inside-eu | not-applicable`
+  writes Dougs' `exemption:inbound:*` values (e.g. a B2B service sold outside the EU).
+- `todo` / `close-check` no longer ask for receipts on transfers between accounts, capital,
+  loans, subsidies, FX and tax settlements (by accounting class); `--strict` includes them.
 - `--vat-exempt` / `vatExempt` accept every purchase reason Dougs offers: `not-applicable`
   (supplier under the VAT franchise, "TVA non applicable") and `outside-eu-not-imported`, besides
   `outside-eu`, `inside-eu` and `no-document`. Purchase exemptions are refused on sales lines.

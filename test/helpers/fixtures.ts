@@ -77,6 +77,28 @@ export const CATEGORIES = {
   equipment: { id: 205, name: 'Matériel informatique', group: 'Immobilisations', rate: 0.2 },
   /** Partially recoverable VAT (like fuel for a passenger car). */
   fuel: { id: 610, name: 'Carburant', group: 'Véhicules', rate: 0.2, recoverage: 0.8 },
+  transfer: {
+    id: 702,
+    name: 'Transfert interne fictif',
+    group: 'Trésorerie',
+    rate: null,
+    accounts: ['580000'],
+  },
+  ownerContribution: {
+    id: 703,
+    name: 'Apport fictif',
+    group: 'Associés',
+    rate: null,
+    accounts: ['associateAccount'],
+  },
+  loan: { id: 704, name: 'Emprunt fictif', group: 'Financement', rate: null, accounts: ['164000'] },
+  taxes: {
+    id: 705,
+    name: 'Impôts fictifs',
+    group: 'Taxes',
+    rate: null,
+    accounts: ['631200', '444000'],
+  },
   uncategorized: { id: -1, name: 'Non catégorisé', group: 'Divers', rate: null },
 } as const;
 type CategoryKey = keyof typeof CATEGORIES;
@@ -214,6 +236,7 @@ export function rawCategories() {
     isInbound: c.id === 301 ? true : c.id === -1 ? null : false,
     parentId: null,
     accountingNumber: c.id === 205 ? 218300 : c.id === 301 ? '706000' : 626100,
+    resolvedAccountingNumbers: 'accounts' in c ? [...c.accounts] : undefined,
     group: { id: 2, name: c.group },
     vat: c.rate === null ? null : { rate: c.rate, isOptional: false, isReversable: true },
   }));

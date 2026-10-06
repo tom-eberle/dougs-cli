@@ -12,9 +12,10 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
   fractions (`0.2`) are converted at the edge.
 - **Exemptions use short names** for the five purchase reasons Dougs offers (`outside-eu`,
   `inside-eu`, `outside-eu-not-imported`, `not-applicable`, `no-document`; read from the live
-  `vatExemptionReason` enum slot, they are not in the bundle). `vatExempt` is refused on sales
-  lines (`SALES_EXEMPTION_UNSUPPORTED`): it would write a purchase value; supplier refunds are
-  purchases and allowed. Other Dougs values
+  `vatExemptionReason` enum slot, they are not in the bundle) and the three sales reasons
+  (`outside-eu`, `inside-eu`, `not-applicable` → `exemption:inbound:*`). The line decides the
+  family (sale = income line or refund to a customer; a supplier refund is a purchase line).
+  Purchase-only reasons on a sales line are `SALES_EXEMPTION_UNSUPPORTED`. Other Dougs values
   (sales exemptions, `nonApplicable`, …) are passed through verbatim.
 - **Mirrors are null on split operations.** `category`, `vatRate`, … mirror the single main
   breakdown and are `null` when there are several; edits then need an explicit `breakdown` id.
@@ -145,6 +146,12 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
   number matches. `<opId>_name` files are pinned to that operation. A date in the file name is
   the document's date (text dates such as billing periods are ignored then) and only scores
   within −5/+10 days, so the next month's charge of a recurring subscription cannot win.
+- **Some movements never need a receipt.** Dougs exposes no "needs a document" flag, so the
+  PCG class decides: categories whose accounts are all internal transfers (58), associate
+  accounts / owner contributions (455, `associateAccount`), capital (10), subsidies (13), loans
+  (16), currency gains/losses (666/766) or tax settlements (444/445) are skipped by
+  `MISSING_RECEIPT` (`Category.needsDocument: false`). `--strict` on `todo` and `close-check`
+  includes them; the rules file's `noReceiptCategories` always applies.
 - **`receipts download`** skips a file that already exists with a non-zero size (the API does not
   expose remote sizes without downloading).
 - **Rules: first match wins**; only fields that differ produce a plan step. `rules init` keeps

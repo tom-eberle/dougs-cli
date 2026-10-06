@@ -117,9 +117,13 @@ changes nothing — always re-read to verify.
   | `exemption:outbound:nonApplicable` | La TVA n'est pas applicable | `not-applicable` |
   | `exemption:outbound:noAccountingDocument` | J'ai perdu les pièces justificatives | `no-document` |
 
-  Sales use `exemption:inbound:insideEuropeanUnion | outsideEuropeanUnion | nonApplicable`
-  (listed by `GET …/operations/{id}/associations/vat-exemption-reasons`); the CLI shows them raw
-  and does not set them. The values are not in the web bundle: they come from the slot data.
+  Sales lines use `exemption:inbound:outsideEuropeanUnion` ("C'est une vente hors union
+  européenne", CLI `outside-eu`), `…insideEuropeanUnion` (`inside-eu`) and `…nonApplicable`
+  ("vente exonérée par une disposition expresse de la loi", `not-applicable`), also listed by
+  `GET …/operations/{id}/associations/vat-exemption-reasons`. The *line* decides which family
+  applies: a sale is an income line or a refund paid to a customer; a supplier refund (income
+  line on a purchase category, `isRefund`) carries outbound values. The values are not in the web
+  bundle: they come from the slot data.
 - **Memo:** the full operation with `memo` changed. The web app sends no `updatedBreakdown`;
   dougs-cli sends the unchanged main breakdown, like the reference scripts — the server accepts
   both.

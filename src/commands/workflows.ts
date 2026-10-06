@@ -319,6 +319,10 @@ export function registerWorkflowCommands(program: Command): void {
         )
           .option('--limit <n>', 'Maximum number of items (newest first)', parsePositiveInt, 50)
           .option('--all', 'Return every item')
+          .option(
+            '--strict',
+            'Also ask for receipts on transfers between accounts, capital, loans, subsidies, FX and tax settlements',
+          )
           .addOption(rulesOption()),
       ),
     ),
@@ -336,6 +340,7 @@ export function registerWorkflowCommands(program: Command): void {
         plan?: string;
         includeWarnings?: boolean;
         allowFiledPeriods?: boolean;
+        strict?: boolean;
       },
       cmd: Command,
     ) => {
@@ -352,6 +357,7 @@ export function registerWorkflowCommands(program: Command): void {
         categories,
         declarations,
         includeWarnings: o.includeWarnings,
+        strict: o.strict,
       });
       const items = o.all ? all : all.slice(0, o.limit);
       if (items.length < all.length)
@@ -767,46 +773,56 @@ export function registerWorkflowCommands(program: Command): void {
           'Accounting year (the Dougs fiscal year ending that year, else the calendar year)',
           parsePositiveInt,
         )
+        .option(
+          '--strict',
+          'Also ask for receipts on transfers between accounts, capital, loans, subsidies, FX and tax settlements',
+        )
         .addOption(rulesOption()),
     ),
     'close-check --year 2025',
     'close-check --year 2026 --no-documents --json | jq .meta',
-  ).action(async (o: { year: number; documents: boolean; rules?: string }, cmd: Command) => {
-    const ctx = contextOf(cmd);
-    const dougs = await ctx.dougs();
-    const years = await dougs.accountingYears().catch(() => []);
-    const fiscal = years.find((y) => y.closingDate.startsWith(String(o.year)));
-    const from = fiscal?.openingDate.slice(0, 10) ?? `${o.year}-01-01`;
-    const to = fiscal?.closingDate.slice(0, 10) ?? `${o.year}-12-31`;
-    ctx.out.info(
-      style.dim(
-        `Accounting period ${from} → ${to}${fiscal ? ' (Dougs fiscal year)' : ' (calendar year)'}`,
-      ),
-    );
-    const { rules } = await loadRules(o.rules);
-    const [records, categories, declarations] = await Promise.all([
-      fetchOperations(ctx, { from, to }),
-      categoriesOrNull(ctx, dougs),
-      declarationsOrEmpty(ctx, dougs),
-    ]);
-    const report = await runCloseCheck(dougs, records, {
-      year: o.year,
-      from,
-      to,
-      rules,
-      categories,
-      declarations,
-      documents: o.documents,
-      onProgress: progress(ctx, 'documents'),
-    });
-    ctx.out.result(report, (r) =>
-      [
-        renderFindings(r.findings, (code) => REASON_TITLES[code] ?? code),
-        '',
+  ).action(
+    async (
+      o: { year: number; documents: boolean; rules?: string; strict?: boolean },
+      cmd: Command,
+    ) => {
+      const ctx = contextOf(cmd);
+      const dougs = await ctx.dougs();
+      const years = await dougs.accountingYears().catch(() => []);
+      const fiscal = years.find((y) => y.closingDate.startsWith(String(o.year)));
+      const from = fiscal?.openingDate.slice(0, 10) ?? `${o.year}-01-01`;
+      const to = fiscal?.closingDate.slice(0, 10) ?? `${o.year}-12-31`;
+      ctx.out.info(
         style.dim(
-          `${r.meta.from} → ${r.meta.to}: ${plural(r.meta.operations, 'operation')}, ${r.meta.bySeverity.error} errors, ${r.meta.bySeverity.warning} warnings, ${r.meta.bySeverity.info} info`,
+          `Accounting period ${from} → ${to}${fiscal ? ' (Dougs fiscal year)' : ' (calendar year)'}`,
         ),
-      ].join('\n'),
-    );
-  });
+      );
+      const { rules } = await loadRules(o.rules);
+      const [records, categories, declarations] = await Promise.all([
+        fetchOperations(ctx, { from, to }),
+        categoriesOrNull(ctx, dougs),
+        declarationsOrEmpty(ctx, dougs),
+      ]);
+      const report = await runCloseCheck(dougs, records, {
+        year: o.year,
+        from,
+        to,
+        rules,
+        categories,
+        declarations,
+        documents: o.documents,
+        strict: o.strict,
+        onProgress: progress(ctx, 'documents'),
+      });
+      ctx.out.result(report, (r) =>
+        [
+          renderFindings(r.findings, (code) => REASON_TITLES[code] ?? code),
+          '',
+          style.dim(
+            `${r.meta.from} → ${r.meta.to}: ${plural(r.meta.operations, 'operation')}, ${r.meta.bySeverity.error} errors, ${r.meta.bySeverity.warning} warnings, ${r.meta.bySeverity.info} info`,
+          ),
+        ].join('\n'),
+      );
+    },
+  );
 }
