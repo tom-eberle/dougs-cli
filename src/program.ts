@@ -36,6 +36,7 @@ export function buildProgram(runtime: Runtime): Command {
     .option('--no-cache', 'Bypass the local cache (categories, extracted PDF text)')
     .helpOption('-h, --help', 'Show help')
     .showSuggestionAfterError(true)
+    .configureHelp({ showGlobalOptions: true })
     .exitOverride()
     .configureOutput({
       writeOut: (s) => runtime.stdout.write(s),
@@ -74,7 +75,6 @@ export function buildProgram(runtime: Runtime): Command {
   registerApiCommand(program);
   registerMetaCommands(program);
   registerDoctorCommand(program);
-  for (const command of program.commands) command.copyInheritedSettings(program);
   return program;
 }
 

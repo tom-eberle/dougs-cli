@@ -220,11 +220,10 @@ export function renderFindings(
             value: (f) => formatSigned(f.op.amount, f.op.direction),
             align: 'right',
           },
-          {
-            header: 'DETAIL',
-            value: (f) => `${f.detail}${f.fix ? style.cyan(' [fix]') : ''}`,
-            flex: true,
-          },
+          ...(list.some((f) => f.fix)
+            ? [{ header: 'FIX', value: (f: Finding) => (f.fix ? style.cyan('plan') : '') }]
+            : []),
+          { header: 'DETAIL', value: (f) => f.detail, flex: true },
         ],
         list,
       ),

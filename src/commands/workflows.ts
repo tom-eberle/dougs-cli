@@ -82,7 +82,7 @@ const REASON_TITLES: Record<string, string> = {
   DOCUMENT_AMOUNT_MISMATCH: 'Document amount differs',
   VAT_TOTAL_MISMATCH: 'TTC ≠ HT + VAT',
   VAT_RATE_INVALID: 'Invalid VAT rate',
-  REVERSE_CHARGE_SUSPECT: 'Reverse charge suspected (foreign supplier billed with French VAT)',
+  REVERSE_CHARGE_SUSPECT: 'Reverse charge to check (foreign supplier)',
   ZERO_VAT_NO_REASON: 'Zero VAT without exemption reason',
   DOCUMENT_VAT_MISMATCH: 'Invoice VAT ≠ booked VAT',
 };

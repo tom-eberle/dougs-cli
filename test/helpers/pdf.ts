@@ -1,12 +1,12 @@
 /** Build a tiny, valid one-page PDF with the given lines of text (synthetic test documents). */
 export function makePdf(lines: string[]): Uint8Array {
-  const escape = (s: string) => s.replace(/[\\()]/g, (c) => `\\${c}`);
+  const escapeText = (s: string) => s.replace(/[\\()]/g, (c) => `\\${c}`);
   const content = [
     'BT',
     '/F1 11 Tf',
     '14 TL',
     '50 780 Td',
-    ...lines.map((l, i) => (i === 0 ? `(${escape(l)}) Tj` : `T* (${escape(l)}) Tj`)),
+    ...lines.map((l, i) => (i === 0 ? `(${escapeText(l)}) Tj` : `T* (${escapeText(l)}) Tj`)),
     'ET',
   ].join('\n');
   const objects = [

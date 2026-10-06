@@ -41,11 +41,22 @@ export function renderTable<T>(
   );
   const gutter = 2 * (columns.length - 1);
   let overflow = widths.reduce((a, b) => a + b, 0) + gutter - terminalWidth;
-  for (let i = 0; i < columns.length && overflow > 0; i++) {
-    if (!columns[i]?.flex) continue;
-    const shrink = Math.min(overflow, Math.max(0, (widths[i] ?? 0) - 12));
-    widths[i] = (widths[i] ?? 0) - shrink;
-    overflow -= shrink;
+  // Shrink the widest flexible column one character at a time, so several
+  // flexible columns end up balanced rather than one collapsing entirely.
+  const MIN_FLEX = 12;
+  while (overflow > 0) {
+    let widest = -1;
+    columns.forEach((c, i) => {
+      if (
+        c.flex &&
+        (widths[i] ?? 0) > MIN_FLEX &&
+        (widest < 0 || (widths[i] ?? 0) > (widths[widest] ?? 0))
+      )
+        widest = i;
+    });
+    if (widest < 0) break;
+    widths[widest] = (widths[widest] ?? 0) - 1;
+    overflow--;
   }
   const line = (values: string[]) =>
     values

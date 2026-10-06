@@ -139,7 +139,7 @@ export function checkVat(op: Operation, ctx: VatContext): Finding[] {
   const why = vendor
     ? `${vendor.name} is established ${EXEMPT_LABEL[vendor.zone]}`
     : ev?.zone === 'inside-eu' || ev?.zone === 'outside-eu'
-      ? `the attached ${ev.source === 'pdf' ? 'invoice' : 'invoice (read by Dougs)'} shows a supplier ${EXEMPT_LABEL[ev.zone]}${ev.country ? ` (${ev.country})` : ''}`
+      ? `the invoice shows a supplier ${EXEMPT_LABEL[ev.zone]}${ev.country ? ` (${ev.country})` : ''}`
       : null;
   const evidence = { vendor: vendor?.name ?? null, document: ev ?? null };
   const fix = (kind: VendorZone) =>
