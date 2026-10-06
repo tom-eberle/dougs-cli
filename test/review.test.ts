@@ -982,3 +982,132 @@ describe('editing validated operations (Dougs treats them as read-only)', () => 
     expect(api.ops.get('503')!.validated).toBe(true);
   });
 });
+
+describe('lines outside VAT (bank fees, insurance, transfers…)', () => {
+  it('normalizes hasVat and the category’s VAT metadata', () => {
+    expect(
+      op({ category: 'bankFees', vatRate: null, vatApplicable: false }).breakdowns[0],
+    ).toMatchObject({ vatApplicable: false });
+    expect(categories.get(12)).toMatchObject({ carriesVat: false });
+    expect(categories.get(77)).toMatchObject({ carriesVat: true });
+  });
+
+  it('does not flag zero VAT without a reason, even with a foreign invoice', () => {
+    const vendors = new VendorRegistry();
+    const lt = evidence({ zone: 'inside-eu', country: 'LT', vatAmount: 0, totals: [12] });
+    const fee = op({
+      wording: 'FICTIONAL BANK FEE',
+      category: 'bankFees',
+      vatRate: null,
+      amount: 12,
+      vatApplicable: false,
+    });
+    expect(checkVat(fee, { vendors, categories, evidence: lt })).toEqual([]);
+    // The category metadata alone also suffices (no VAT config on bank fees).
+    const optedIn = op({
+      wording: 'FICTIONAL BANK FEE',
+      category: 'bankFees',
+      vatRate: null,
+      amount: 12,
+    });
+    expect(checkVat(optedIn, { vendors, categories, evidence: lt })).toEqual([]);
+  });
+
+  it('apply refuses an exemption on a line outside VAT, already in the preview', async () => {
+    const api = new FakeDougs([
+      rawOp({
+        id: 600,
+        category: 'bankFees',
+        vatRate: null,
+        vatApplicable: false,
+        validated: false,
+      }),
+    ]);
+    const r = await runCli(api, ['ops', 'set', '600', '--vat-exempt', 'inside-eu', '--dry-run']);
+    expect([r.code, r.error().code]).toEqual([5, 'EXEMPTION_UNAVAILABLE']);
+    expect(api.writes).toHaveLength(0);
+  });
+});
+
+describe('plans never contain steps apply would refuse', () => {
+  it('rules apply lists them as not plannable, with the reason', async () => {
+    const api = new FakeDougs([
+      rawOp({
+        id: 610,
+        wording: 'FICTIONAL BANK',
+        category: 'bankFees',
+        vatRate: null,
+        vatApplicable: false,
+        validated: false,
+      }),
+      rawOp({
+        id: 611,
+        wording: 'FICTIONAL BANK',
+        vatRate: 20,
+        validated: false,
+        locked: 'manual',
+      }),
+      rawOp({ id: 612, wording: 'FICTIONAL BANK', vatRate: 20, validated: false }),
+    ]);
+    const dir = tempHome();
+    const rules = join(dir, 'r.json');
+    writeFileSync(
+      rules,
+      JSON.stringify({
+        rules: [{ match: { wording: 'FICTIONAL BANK' }, set: { vatExempt: 'inside-eu' } }],
+      }),
+    );
+    const plan = join(dir, 'p.plan.json');
+    const r = await runCli(api, ['rules', 'apply', '--rules', rules, '--plan', plan]);
+    expect(r.json()).toMatchObject({
+      meta: { steps: 1, notPlannable: 2 },
+      steps: [{ op: '612' }],
+      notPlannable: expect.arrayContaining([
+        expect.objectContaining({ op: '610', code: 'EXEMPTION_UNAVAILABLE' }),
+        expect.objectContaining({ op: '611', code: 'LOCKED' }),
+      ]),
+    });
+    expect(JSON.parse(readFileSync(plan, 'utf8')).steps.map((s: { op: string }) => s.op)).toEqual([
+      '612',
+    ]);
+  });
+
+  it('vat check keeps a strong fix out of the plan when the operation is locked', async () => {
+    const api = new FakeDougs([
+      rawOp({
+        id: 620,
+        date: '2026-08-05',
+        wording: 'FICTIONAL SAAS',
+        vatRate: 20,
+        locked: 'manual',
+        attachments: [{ name: 'i.pdf', vendorInvoiceId: 'vi-620' }],
+      }),
+    ]);
+    api.vendorInvoices.set('vi-620', {
+      id: 'vi-620',
+      prefillStatus: 'prefilled',
+      supplierCountry: 'US',
+      vatAmount: 0,
+      amount: 48,
+      currency: 'EUR',
+      vatBreakdown: [{ categoryCode: 'AE' }],
+    });
+    const dir = tempHome();
+    const plan = join(dir, 'v.plan.json');
+    const r = await runCli(api, [
+      'vat',
+      'check',
+      '--from',
+      '2026-08-01',
+      '--to',
+      '2026-08-31',
+      '--plan',
+      plan,
+    ]);
+    expect(r.json()).toMatchObject({
+      meta: { fixes: 0, notPlannable: 1 },
+      notPlannable: [{ op: '620', code: 'LOCKED' }],
+    });
+    expect(JSON.parse(readFileSync(plan, 'utf8')).steps).toEqual([]);
+  });
+});

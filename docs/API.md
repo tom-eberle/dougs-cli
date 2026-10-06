@@ -144,6 +144,11 @@ changes nothing — always re-read to verify.
   `X-Message-Code: accountingLine.lockedByDateWithAccountingNumber`. The web app then offers
   accountants (only) to retry with `?force=true`, which **unlocks the ledger**. dougs-cli never
   sends `force` and reports `LOCKED` instead.
+- **Lines outside VAT:** a breakdown's `hasVat: false` means no VAT applies (bank fees,
+  insurance, salaries, transfers…): it never gets a `vatExemptionReason` slot (live: every expense
+  line with `hasVat: false` had zero VAT, no slot and no reason). Categories without a `vat`
+  config are outside VAT by default; some (e.g. bank fees) let a line opt in via the
+  `hasOptionalVat` association.
 - **Refunds:** breakdowns carry `isRefund`; a refund reverses VAT of the opposite flow (money back
   from a supplier reduces deductible VAT).
 

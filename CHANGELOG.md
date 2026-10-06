@@ -12,6 +12,9 @@ All notable changes to this project are documented here. The format follows
   `outside-eu`, `inside-eu` and `no-document`. Purchase exemptions are refused on sales lines.
 
 ### Fixed
+- `vat check` no longer flags zero VAT on lines outside VAT (bank fees, insurance, transfers…,
+  Dougs `hasVat: false` or a category without VAT), even with a foreign invoice; plans no longer
+  contain steps apply would refuse — they are listed as `notPlannable` with the reason.
 - Editing a validated operation (403 on live data): like the web app, the CLI now reopens it,
   edits, and validates it again, reporting both steps; a refused reopening is
   `VALIDATED_READONLY`. A 403 on a write no longer triggers a session refresh or a "log in

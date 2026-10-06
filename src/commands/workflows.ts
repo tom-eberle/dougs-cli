@@ -5,8 +5,8 @@ import type { DeclarationSummary, Dougs, OperationRecord } from '../api/dougs.js
 import { DougsError, ExitCode, usageError } from '../output/errors.js';
 import { style } from '../output/style.js';
 import { renderTable } from '../output/table.js';
-import { needsPeriodGuard } from '../plan/apply.js';
-import { buildPlan, type StepDraft } from '../plan/types.js';
+import { needsPeriodGuard, whyNotPlannable } from '../plan/apply.js';
+import { buildPlan, type PlanStep, type StepDraft } from '../plan/types.js';
 import { addDays, parseMonthOption, previousMonth, today } from '../util/dates.js';
 import { formatAmount } from '../util/money.js';
 import { plural } from '../util/text.js';
@@ -76,34 +76,58 @@ function addPlanSafetyOptions(command: Command, { warnings = true } = {}): Comma
   );
 }
 
+export interface NotPlannable {
+  op: string;
+  action: string;
+  code: string;
+  reason: string;
+}
+
 /**
- * Keep plan steps that are safe to write: set/validate/detach steps on operations in
- * a filed VAT period or a closed year are held back (and counted) unless allowed.
+ * Keep only steps apply would accept, using apply's own checks (locks, filed
+ * periods unless allowed, validation, exemption preconditions, split operations).
+ * The others are reported as not plannable, with the reason.
  */
-async function withoutFiledPeriods(
+async function plannableSteps(
   ctx: Context,
   dougs: Dougs,
   steps: StepDraft[],
-  dates: ReadonlyMap<string, string>,
-  allow?: boolean,
-): Promise<{ steps: StepDraft[]; heldBack: number }> {
-  if (allow || !needsPeriodGuard(steps)) return { steps, heldBack: 0 };
-  const guard = await loadPeriodGuard(dougs);
-  const kept = steps.filter((s) => {
-    if (s.action === 'attach') return true;
-    const date = dates.get(s.op);
-    return !date || !guard?.reason(date);
-  });
-  const heldBack = steps.length - kept.length;
+  records: readonly OperationRecord[],
+  allowFiledPeriods?: boolean,
+): Promise<{ steps: StepDraft[]; notPlannable: NotPlannable[]; heldBack: number }> {
+  if (!steps.length) return { steps, notPlannable: [], heldBack: 0 };
+  const byId = new Map(records.map((r) => [r.op.id, r]));
+  const periods = needsPeriodGuard(steps)
+    ? await loadPeriodGuard(dougs, allowFiledPeriods)
+    : undefined;
+  const kept: StepDraft[] = [];
+  const notPlannable: NotPlannable[] = [];
+  for (const draft of steps) {
+    const record = byId.get(draft.op);
+    const refusal = record
+      ? whyNotPlannable(record.raw, record.op, { id: 'check', ...draft } as PlanStep, {
+          periods,
+          allowFiledPeriods,
+        })
+      : null;
+    if (refusal)
+      notPlannable.push({
+        op: draft.op,
+        action: draft.action,
+        code: refusal.code,
+        reason: refusal.message,
+      });
+    else kept.push(draft);
+  }
+  const heldBack = notPlannable.filter((n) => n.code === 'FILED_PERIOD').length;
   if (heldBack)
     ctx.out.warn(
       `${heldBack} fix(es) left out: the operations are in filed VAT periods or closed years (--allow-filed-periods to include them)`,
     );
-  return { steps: kept, heldBack };
-}
-
-function datesOf(records: readonly OperationRecord[]): Map<string, string> {
-  return new Map(records.map((r) => [r.op.id, r.op.date]));
+  const others = notPlannable.length - heldBack;
+  if (others)
+    ctx.out.warn(`${others} fix(es) left out because apply would refuse them (see notPlannable)`);
+  return { steps: kept, notPlannable, heldBack };
 }
 
 async function declarationsOrEmpty(ctx: Context, dougs: Dougs): Promise<DeclarationSummary[]> {
@@ -335,11 +359,11 @@ export function registerWorkflowCommands(program: Command): void {
           style.dim(`Showing ${items.length} of ${all.length} items (use --all or --limit)`),
         );
       if (o.plan) {
-        const { steps } = await withoutFiledPeriods(
+        const { steps } = await plannableSteps(
           ctx,
           dougs,
           items.flatMap((i) => i.suggestion ?? []),
-          datesOf(records),
+          records,
           o.allowFiledPeriods,
         );
         await maybeWritePlan(dougs, o.plan, 'todo', steps);
@@ -406,13 +430,11 @@ export function registerWorkflowCommands(program: Command): void {
         .map((f) => f.fix!);
       const candidates = [...new Map(fixes.map((f) => [`${f.op}`, f])).values()];
       // Counted even without --plan, so meta.fixes is what a plan would really contain.
-      const { steps: unique, heldBack } = await withoutFiledPeriods(
-        ctx,
-        dougs,
-        candidates,
-        datesOf(records),
-        o.allowFiledPeriods,
-      );
+      const {
+        steps: unique,
+        heldBack,
+        notPlannable,
+      } = await plannableSteps(ctx, dougs, candidates, records, o.allowFiledPeriods);
       const planPath = await maybeWritePlan(dougs, o.plan, 'vat check', unique);
       const counts: Record<string, number> = {};
       for (const f of findings) counts[f.code] = (counts[f.code] ?? 0) + 1;
@@ -426,14 +448,19 @@ export function registerWorkflowCommands(program: Command): void {
           fixes: unique.length,
           weakFixes: findings.filter((f) => f.fix && f.severity !== 'error').length,
           heldBackFiledPeriods: heldBack,
+          notPlannable: notPlannable.length,
           plan: planPath,
         },
         findings,
+        notPlannable,
       };
       ctx.out.result(report, (r) =>
         [
           renderFindings(r.findings, (code) => REASON_TITLES[code] ?? code),
           '',
+          ...r.notPlannable.map((n) =>
+            style.yellow(`not plannable: ${n.op} ${n.action} — ${n.reason} (${n.code})`),
+          ),
           style.dim(
             `${plural(r.meta.operations, 'operation')} checked, ${r.meta.documentsChecked} with documents read.`,
           ),
@@ -606,11 +633,11 @@ export function registerWorkflowCommands(program: Command): void {
       const records = await fetchOperations(ctx, filter);
       const result = planRules(rules, records);
       const dougs = await ctx.dougs();
-      const { steps, heldBack } = await withoutFiledPeriods(
+      const { steps, heldBack, notPlannable } = await plannableSteps(
         ctx,
         dougs,
         result.steps,
-        datesOf(records),
+        records,
         o.allowFiledPeriods,
       );
       result.steps = steps;
@@ -624,10 +651,12 @@ export function registerWorkflowCommands(program: Command): void {
           steps: result.steps.length,
           blocked: result.blocked.length,
           heldBackFiledPeriods: heldBack,
+          notPlannable: notPlannable.length,
           plan: planPath,
         },
         steps: result.steps,
         blocked: result.blocked,
+        notPlannable,
       };
       ctx.out.result(report, (r) =>
         [
@@ -645,6 +674,9 @@ export function registerWorkflowCommands(program: Command): void {
               )
             : style.green('✓ Every matched operation already follows the rules.'),
           ...r.blocked.map((b) => style.yellow(`! ${b.op} ${b.wording}: ${b.reason}`)),
+          ...r.notPlannable.map((n) =>
+            style.yellow(`not plannable: ${n.op} ${n.action} — ${n.reason} (${n.code})`),
+          ),
           '',
           style.dim(
             `${r.meta.operations} operations · ${r.meta.matched} matched a rule · ${r.meta.compliant} already compliant · ${r.meta.steps} to change`,

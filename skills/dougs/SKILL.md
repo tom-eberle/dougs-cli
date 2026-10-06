@@ -129,6 +129,10 @@ dougs ops validate 10001 --yes --json
   ask the user. `NOT_REVALIDATED`: the edit worked but the operation needs fixing before
   `dougs ops validate`. A 403 on a write is never a login problem; don't ask the user to log in.
 - `conflict` steps (apply exit 7): the operation changed since planning; re-plan.
+- `notPlannable` in `vat check` / `rules apply` output: fixes apply would refuse (locked, filed
+  period, no exemption possible…). Report them; don't try to force them through `ops set`.
+- Zero VAT on bank fees, insurance, salaries or transfers is normal (`vatApplicable: false`):
+  never add an exemption there.
 - `sideEffects` on applied steps (exit 7): Dougs changed something else too; report it to the user.
 
 ## Data notes

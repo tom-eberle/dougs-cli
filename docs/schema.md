@@ -50,6 +50,7 @@ Conventions everywhere:
 | `section` | string \| null | `main`, `ecommerceDispatch:fees`, … |
 | `direction` | `expense` \| `income` | Can differ from the operation (fees inside a payout) |
 | `isRefund` | boolean | A refund: reverses VAT of the opposite flow |
+| `vatApplicable` | boolean | False when VAT does not apply to the line (bank fees, transfers…): no VAT, no exemption |
 | `category` | `{ id, name, path }` \| null | `null` = uncategorized (Dougs `-1`); `path` = `[group, name]` |
 | `amount` | number | Gross (TTC) |
 | `amountExcludingVat` | number | Net (HT) |
@@ -171,6 +172,10 @@ did not ask for.
 
 ## Other outputs
 
+- `vat check` and `rules apply` also return `notPlannable: [{ op, action, code, reason }]`: fixes
+  left out of the plan because apply would refuse them (`LOCKED`, `FILED_PERIOD`,
+  `EXEMPTION_UNAVAILABLE`, …), counted in `meta.notPlannable`.
+- `category` (`categories list`) includes `carriesVat`: false for categories outside VAT.
 - `vat-summary`: `{ meta: { month, estimate: true, operations, unvalidated, uncategorized,
   declaration: { id, label, status, filed, dueDate, isLate, hasForm, corrective } }, collectedByRate:
   [{ rate, base, vat }], lines: [{ box, label, estimate, declared, difference }], notes }` —

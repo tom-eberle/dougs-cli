@@ -212,8 +212,10 @@ export class FakeDougs {
         b.vatAmountWithRecoverageRate = Math.round(b.vatAmount * rec * 100) / 100;
         b.amountExcludingTaxesWithRecoverageRate =
           Math.round((b.amount - b.vatAmountWithRecoverageRate) * 100) / 100;
+        // OBSERVED (live data): lines with hasVat=false never get an exemption slot.
         if (
           b.categoryId !== -1 &&
+          b.hasVat !== false &&
           b.vatAmount === 0 &&
           !b.associations?.some((a) => a.name === 'vatExemptionReason')
         )

@@ -21,6 +21,7 @@ export const rawBreakdownSchema = z.looseObject({
   isCounterpart: z.boolean(),
   isInbound: z.boolean().optional(),
   isRefund: z.boolean().optional(),
+  hasVat: z.boolean().optional(),
   section: z.string().optional(),
   categoryId: z.number(),
   resolvedCategoryId: z.number().optional(),
@@ -251,6 +252,9 @@ export const breakdownSchema = z.object({
     .enum(['expense', 'income'])
     .describe('Can differ from the operation (e.g. fees inside a payout)'),
   isRefund: z.boolean().describe('A refund: reverses VAT of the opposite direction'),
+  vatApplicable: z
+    .boolean()
+    .describe('False when VAT does not apply to this line (Dougs hasVat): no VAT, no exemption'),
   category: categoryRefSchema.nullable().describe('null when uncategorized (Dougs categoryId -1)'),
   amount: z.number().describe('Gross amount (TTC) in EUR'),
   amountExcludingVat: z.number().describe('Net amount (HT) in EUR'),
@@ -324,6 +328,11 @@ export const categorySchema = z.object({
   direction: z.enum(['expense', 'income', 'both']),
   accountingNumber: z.string().nullable().describe('French PCG account, e.g. "626100"'),
   defaultVatRate: z.number().nullable().describe('Percent'),
+  carriesVat: z
+    .boolean()
+    .describe(
+      'False for categories outside VAT (bank fees, transfers, salaries, taxes…); a line may still opt in',
+    ),
   vatOptional: z.boolean(),
 });
 export type Category = z.infer<typeof categorySchema>;

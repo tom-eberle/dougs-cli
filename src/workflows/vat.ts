@@ -254,10 +254,15 @@ export function checkVat(op: Operation, ctx: VatContext): Finding[] {
       ),
     );
   } else if (!b.vatExemptReason && b.vatAmount === 0 && b.category && !invoiceChargesVat) {
+    // Lines outside VAT (bank fees, insurance, salaries, transfers…) rightly have no VAT
+    // and no exemption reason; Dougs offers no exemption there. The line's own hasVat
+    // decides; the category's VAT metadata is the fallback.
     const category = ctx.categories?.get(b.category.id);
+    const outsideVat = !b.vatApplicable || (category ? !category.carriesVat : false);
     const expectsVat =
-      zone !== null ||
-      (category ? (category.defaultVatRate ?? 0) > 0 && !category.vatOptional : false);
+      !outsideVat &&
+      (zone !== null ||
+        (category ? (category.defaultVatRate ?? 0) > 0 && !category.vatOptional : false));
     if (expectsVat)
       findings.push(
         vatFinding(

@@ -64,6 +64,14 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
   web app does; `changes` shows `validated true → false` before and `false → true` after. If the
   edit leaves errors, the operation stays open (`NOT_REVALIDATED`). If the edit fails and only the
   reopening stuck, the validation is put back. A refused reopening is `VALIDATED_READONLY`.
+- **Lines outside VAT are never flagged or "fixed".** `ZERO_VAT_NO_REASON` is skipped when the
+  line's `hasVat` is false (normalized `vatApplicable`) or its category carries no VAT
+  (`carriesVat`, from the category's `vat` config); a foreign invoice doesn't change that. An
+  exemption on such a line is refused (`EXEMPTION_UNAVAILABLE`) already in the preview.
+- **Plans only contain steps apply would accept.** `vat check`, `rules apply` and `todo` run
+  apply's own checks (lock, filed period, validation, exemption preconditions, split
+  operations) on every candidate step; refused ones are listed in `notPlannable` with the code
+  and reason instead of being written.
 - **A 403 on a write is not a session problem**: no cookie refresh is attempted (reads still
   refresh on 401/403), and the hint says the session is fine. `CATEGORY_REQUIRED` and
   `SALES_EXEMPTION_UNSUPPORTED` are checked before any write, in previews too.

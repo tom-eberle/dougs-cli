@@ -58,6 +58,7 @@ function normalizeBreakdown(b: RawBreakdown, opInbound: boolean): Breakdown {
     section: b.section ?? null,
     direction: (b.isInbound ?? opInbound) ? 'income' : 'expense',
     isRefund: b.isRefund ?? false,
+    vatApplicable: b.hasVat ?? true,
     category: uncategorized
       ? null
       : { id: b.categoryId, name, path: group ? [group, name] : [name] },
@@ -153,6 +154,8 @@ export function normalizeCategory(c: RawCategory): Category {
           ? String(c.resolvedAccountingNumbers[0])
           : null,
     defaultVatRate: typeof c.vat?.rate === 'number' ? rateToPercent(c.vat.rate) : null,
+    // No VAT config, or a 0 rate: outside VAT. Keyword rates (e.g. "fromEuCountries") carry VAT.
+    carriesVat: !!c.vat && (typeof c.vat.rate !== 'number' || c.vat.rate > 0),
     vatOptional: c.vat?.isOptional ?? false,
   };
 }

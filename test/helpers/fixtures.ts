@@ -11,6 +11,7 @@ export interface RawBreakdownFixture {
   isCounterpart: boolean;
   isInbound: boolean;
   isRefund: boolean;
+  hasVat: boolean;
   section: string;
   categoryId: number;
   resolvedCategoryId: number;
@@ -102,6 +103,8 @@ export interface OpOptions {
   refund?: boolean;
   locked?: 'manual' | 'date';
   errors?: unknown[];
+  /** False for a line outside VAT (Dougs hasVat=false): no VAT, no exemption slot. */
+  vatApplicable?: boolean;
   /** Make the exemption reason a required (non-optional) slot, as Dougs does for some categories. */
   requiredExemption?: boolean;
 }
@@ -128,6 +131,7 @@ export function breakdown(
     isCounterpart: false,
     isInbound: !!o.income,
     isRefund: !!o.refund,
+    hasVat: o.vatApplicable ?? true,
     section: 'main',
     categoryId: cat.id,
     resolvedCategoryId: cat.id,
@@ -146,7 +150,7 @@ export function breakdown(
     associations:
       cat.id === -1
         ? null
-        : vat === 0
+        : vat === 0 && (o.vatApplicable ?? true)
           ? [
               {
                 name: 'vatExemptionReason',

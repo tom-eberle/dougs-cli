@@ -240,7 +240,7 @@ export function validationProblems(raw: RawOperation): string[] {
   return problems;
 }
 
-/** Refusals that apply in previews and at apply time alike. */
+/** Refusals that apply in previews, at apply time, and when writing plans. */
 function guard(raw: RawOperation, op: Operation, step: PlanStep, options: ApplyOptions): void {
   // Detaching can remove the only invoice behind VAT already deducted on a filed
   // return, so it is guarded like an edit. Attaching a document stays allowed.
@@ -267,6 +267,16 @@ function guard(raw: RawOperation, op: Operation, step: PlanStep, options: ApplyO
   if (step.action === 'set' && step.set.vatExempt !== undefined) {
     // vatExempt writes a purchase reason; a supplier refund (inbound, isRefund) is still a purchase.
     const b = targetBreakdown(op, step);
+    // VAT does not apply to this line (Dougs hasVat=false): no exemption slot will exist.
+    if (!b.vatApplicable && step.set.category === undefined)
+      throw new DougsError(
+        'EXEMPTION_UNAVAILABLE',
+        `Operation ${op.id}: VAT does not apply to this line (e.g. bank fees), so there is no exemption to record`,
+        {
+          exitCode: ExitCode.rejected,
+          hint: 'nothing to fix: zero VAT without a reason is correct here',
+        },
+      );
     // Uncategorized breakdowns have no associations, hence no exemption slot.
     if (!b.category && step.set.category === undefined)
       throw new DougsError(
@@ -469,4 +479,23 @@ export function reportOf(
 /** Steps the period guard applies to; plans without any don't need to load it. */
 export function needsPeriodGuard(steps: readonly { action: PlanStep['action'] }[]): boolean {
   return steps.some((s) => s.action !== 'attach');
+}
+
+/**
+ * Why apply would refuse this step on this operation, predicted with the same
+ * checks apply runs (lock, filed period, validation, exemption preconditions,
+ * split operations). Null when the step is plannable.
+ */
+export function whyNotPlannable(
+  raw: RawOperation,
+  op: Operation,
+  step: PlanStep,
+  options: Pick<ApplyOptions, 'periods' | 'allowFiledPeriods'> = {},
+): DougsError | null {
+  try {
+    guard(raw, op, step, options);
+    return null;
+  } catch (error) {
+    return toDougsError(error);
+  }
 }
