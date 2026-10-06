@@ -126,7 +126,7 @@ vatAmount, reverseCharge, totals, currency }`.
 | `action` | `set`, `attach`, `detach`, `validate` |
 | `set` | Any of `category` (id), `vatRate` (percent), `vatExempt` (`outside-eu`/`inside-eu`/`no-document`), `memo` (string or null). `vatRate` and `vatExempt` are exclusive |
 | `breakdown` | Optional breakdown id, required for split operations |
-| `file`, `name` | Attach: path relative to the plan file; display name defaults to the file name without a leading `<digits>_` |
+| `file`, `name` | Attach: path relative to the plan file; display name defaults to the file name without a leading `<digits>_`. Only `.pdf .png .jpg .jpeg .heic .webp`, inside the plan's directory or the current directory (symlinks resolved) unless `apply --allow-any-path` |
 | `expect` | State seen when planning (`category` with `-1` for uncategorized, `vatRate`, `vatAmount`, `vatExemptReason`, `memo`, `validated`, `attachments` count). If it changed, `apply` skips the step unless `--force` |
 | `why` | Required; shown on review |
 
@@ -147,6 +147,8 @@ vatAmount, reverseCharge, totals, currency }`.
   ]
 }
 ```
+
+Attach results also carry `file`: the resolved absolute path that is (or would be) uploaded.
 
 Statuses: `applied`, `planned` (dry run), `skipped` (already satisfied, or changed since
 planning), `failed`, `pending` (not attempted after a failure without `--continue-on-error`).
@@ -174,7 +176,7 @@ In JSON mode a failure prints one line on **stderr**:
 |---|---|---|
 | 0 | OK (also for reports with findings) | |
 | 1 | Unexpected | `UNEXPECTED` |
-| 2 | Usage, or confirmation required | `USAGE`, `CONFIRMATION_REQUIRED`, `PLAN_INVALID`, `RULES_INVALID`, `COMPANY_REQUIRED`, `SPLIT_OPERATION`, `CATEGORY_REQUIRED` |
+| 2 | Usage, or confirmation required | `USAGE`, `CONFIRMATION_REQUIRED`, `PLAN_INVALID`, `UNSAFE_ATTACHMENT`, `RULES_INVALID`, `COMPANY_REQUIRED`, `SPLIT_OPERATION`, `CATEGORY_REQUIRED` |
 | 3 | Auth missing or expired | `AUTH_MISSING`, `AUTH_EXPIRED`, `COOKIE_MISSING`, `KEYCHAIN_UNAVAILABLE` |
 | 4 | Not found | `NOT_FOUND` |
 | 5 | Rejected by Dougs | `API_REJECTED`, `FORBIDDEN`, `VERIFY_FAILED`, `EXEMPTION_UNAVAILABLE` |

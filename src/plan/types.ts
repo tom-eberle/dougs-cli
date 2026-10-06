@@ -133,6 +133,10 @@ export const stepResultSchema = z.object({
   status: z.enum(STEP_STATUSES),
   reason: z.string().optional(),
   why: z.string(),
+  file: z
+    .string()
+    .optional()
+    .describe('Attach steps: the resolved absolute path that is (or would be) uploaded'),
   operation: z
     .object({
       date: z.string(),

@@ -24,14 +24,20 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
 - **Listing is newest-first per validation status**, verified live across all pages. We page each
   list (`validated=true|false`) independently and stop as soon as a page ends before `--from` or
   once `--limit` matches are certain. A page that is not date-sorted disables early stopping.
-- **Filtering is local.** The server's `q-date` only supports a month or a single day, and `q`
-  text search missed obvious matches, so `--from/--to/--search` are applied client-side.
+- **Filtering is local.** `q-date=YYYY-MM` is *not* a strict month filter: checked live against a
+  full fetch, it returned hundreds of operations from other months for every month tried (it
+  appears to match other fields too). `q` text search missed obvious matches. So
+  `--from/--to/--search` are applied client-side, and early-stopping pagination does the
+  narrowing instead.
 - **401 vs 403.** 401 means the session is gone (exit 3). 403 is also returned for endpoints the
   user may not access with a valid session, so it maps to `FORBIDDEN` (exit 5) — after one
   transparent browser-cookie refresh when the credential came from a browser.
-- **VAT rate edits** mirror the web app's VAT edit (`vatAmount` + `manualVatAmount`, computed from
-  the gross amount) and also send the rate; verification checks the resulting VAT amount.
-- **Memo edits** send the whole operation without `updatedBreakdown`, as the web app does.
+- **VAT rate edits are computed client-side.** The web app has no "change rate and let the server
+  recompute" path: its VAT field sends `vatAmount` + `manualVatAmount` directly (rates come from
+  the category). We compute the amount from the gross (`gross − gross / (1 + rate)`), send it the
+  same way plus the rate, and verify the resulting VAT amount on re-read.
+- **Memo edits** send the whole operation with the unchanged main breakdown as
+  `updatedBreakdown`, like the reference scripts (the web app omits it; the server accepts both).
 - **Validation** is the same update call with `validated: true` — there is no separate endpoint.
 - Every write is followed by a re-read; a 200 that changed nothing is reported as `VERIFY_FAILED`.
 
@@ -66,6 +72,20 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
   expose remote sizes without downloading).
 - **Rules: first match wins**; only fields that differ produce a plan step. `rules init` keeps
   merchants seen at least twice whose category agrees in ≥ 80 % of validated operations.
+
+## Security
+
+- **Uploads from plans are constrained.** A plan may come from an agent or a shared file, so an
+  `attach` step may only upload `.pdf .png .jpg .jpeg .heic .webp` files, resolved with `realpath`
+  (symlinks followed), and only from the plan's directory or the current directory unless
+  `--allow-any-path` is given. A plan with any disallowed upload is refused as a whole before
+  anything is written. Previews and the confirmation prompt show each file's absolute path.
+- **CSV export neutralizes formulas**: text columns (wording, memo, category, category_group)
+  starting with `= + - @`, tab or CR get a leading `'`. Numbers stay numbers; JSON is untouched.
+- **No terminal escapes from data.** All human output (tables, key/values, errors, prompts,
+  progress) is stripped of C0/C1 control characters. Our own colours use a per-process random
+  marker that is turned into ESC only after sanitizing, so data cannot forge them. JSON output is
+  never altered.
 
 ## Housekeeping
 

@@ -1,9 +1,9 @@
-import { isAbsolute, resolve } from 'node:path';
 import type { Dougs } from '../api/dougs.js';
 import { EXEMPTION_VALUES, normalizeOperation, percentToRate } from '../api/normalize.js';
 import type { Operation, RawBreakdown, RawOperation } from '../api/schemas.js';
 import { DougsError, ExitCode, errorPayload } from '../output/errors.js';
 import { cents, vatFromGross } from '../util/money.js';
+import { resolveUpload } from './attachments.js';
 import { describeChanges, driftedFields, isSatisfied, targetBreakdown } from './diff.js';
 import type { ApplyReport, Plan, PlanStep, SetChanges, SetStep, StepResult } from './types.js';
 
@@ -13,6 +13,8 @@ export interface ApplyOptions {
   continueOnError?: boolean;
   /** Directory relative attach paths are resolved against (the plan file's). */
   baseDir?: string;
+  /** Allow attach steps to upload files outside the plan directory and cwd. */
+  allowAnyPath?: boolean;
   onResult?: (result: StepResult) => void;
 }
 
@@ -128,8 +130,10 @@ async function applySet(
   if (s.category !== undefined) current = await setCategory(dougs, current, id, s.category);
   if (s.vatExempt !== undefined) current = await setExemption(dougs, current, id, s.vatExempt);
   if (s.vatRate !== undefined) current = await setVatRate(dougs, current, id, s.vatRate);
+  // Like the reference scripts, send the (unchanged) main breakdown as
+  // updatedBreakdown with a memo edit; the server ignores it otherwise.
   if (s.memo !== undefined && (current.memo ?? null) !== (s.memo ?? null))
-    await dougs.updateOperation({ ...current, memo: s.memo });
+    await dougs.updateOperation({ ...current, memo: s.memo }, rawBreakdown(current, id));
 }
 
 async function perform(
@@ -137,15 +141,13 @@ async function perform(
   raw: RawOperation,
   op: Operation,
   step: PlanStep,
-  baseDir: string,
+  upload: string | undefined,
 ) {
   switch (step.action) {
     case 'set':
       return applySet(dougs, raw, op, step);
-    case 'attach': {
-      const path = isAbsolute(step.file) ? step.file : resolve(baseDir, step.file);
-      return dougs.attachFiles(step.op, [{ path, name: step.name }]);
-    }
+    case 'attach':
+      return dougs.attachFiles(step.op, [{ path: upload!, name: step.name }]);
     case 'detach':
       return dougs.detachAttachment(step.op, step.attachmentId);
     case 'validate':
@@ -163,7 +165,22 @@ export async function executeStep(
   step: PlanStep,
   options: ApplyOptions = {},
 ): Promise<StepResult> {
-  const base = { step: step.id, op: step.op, action: step.action, why: step.why };
+  // Validate an upload before anything else, so an unsafe plan fails at preview time.
+  const upload =
+    step.action === 'attach'
+      ? resolveUpload(step.file, {
+          baseDir: options.baseDir ?? process.cwd(),
+          cwd: process.cwd(),
+          allowAnyPath: options.allowAnyPath,
+        })
+      : undefined;
+  const base = {
+    step: step.id,
+    op: step.op,
+    action: step.action,
+    why: step.why,
+    ...(upload ? { file: upload } : {}),
+  };
   const { raw, op } = await dougs.getOperation(step.op);
   const result = { ...base, operation: summary(op), changes: describeChanges(op, step) };
   if (isSatisfied(op, step))
@@ -177,7 +194,7 @@ export async function executeStep(
     };
   if (options.dryRun) return { ...result, status: 'planned' };
 
-  await perform(dougs, raw, op, step, options.baseDir ?? process.cwd());
+  await perform(dougs, raw, op, step, upload);
   const after = normalizeOperation(await dougs.getRaw(step.op), { company: dougs.company });
   if (!isSatisfied(after, step))
     throw new DougsError(

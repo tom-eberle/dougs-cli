@@ -23,6 +23,13 @@ First release.
 - `dougs apply`: review and execute plans — idempotent, resumable, verifies every write, audit
   report.
 
+### Safety
+- Plans are treated as untrusted input: attach steps upload only receipt file types from the
+  plan's directory or the current directory (symlinks resolved) unless `--allow-any-path`;
+  previews and confirmations show every file's absolute path.
+- CSV export neutralizes spreadsheet formulas in text columns.
+- Human output strips terminal control characters coming from data; JSON is never altered.
+
 ### Building blocks
 - `ops list|get|set|attach|detach|validate|download`, `receipts download`, `categories list`,
   `accounts list`, `export` (CSV/JSON/JSONL), `api` (authenticated escape hatch).

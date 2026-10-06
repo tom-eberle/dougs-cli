@@ -24,6 +24,8 @@ export interface RunOptions {
   stdinIsTTY?: boolean;
   stdin?: string;
   answer?: string;
+  /** Receives every confirmation question asked on the TTY. */
+  questions?: string[];
   env?: Record<string, string>;
   /** Log in first by writing a config file with the fake session. */
   loggedIn?: boolean;
@@ -70,7 +72,10 @@ export async function runCli(
     stdoutIsTTY: options.stdoutIsTTY ?? false,
     stdinIsTTY: options.stdinIsTTY ?? false,
     readStdin: async () => options.stdin ?? '',
-    ask: async () => options.answer ?? 'n',
+    ask: async (question) => {
+      options.questions?.push(question);
+      return options.answer ?? 'n';
+    },
     readBrowserSession: async (browser) => {
       if (!options.browserSession) throw new Error(`no ${browser} session in test`);
       return options.browserSession;

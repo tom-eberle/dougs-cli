@@ -1,5 +1,5 @@
 import { DougsError, ExitCode, errorPayload, redact, toDougsError } from './errors.js';
-import { style } from './style.js';
+import { sanitizeForTerminal, style } from './style.js';
 
 export type OutputMode = 'human' | 'json' | 'jsonl';
 
@@ -57,22 +57,35 @@ export class Output {
       this.stdout.write(`${JSON.stringify(data, null, 2)}\n`);
     } else {
       const text = human(data);
-      if (text) this.stdout.write(text.endsWith('\n') ? text : `${text}\n`);
+      if (text) this.stdout.write(sanitizeForTerminal(text.endsWith('\n') ? text : `${text}\n`));
     }
+  }
+
+  /** Human-readable text on stderr (e.g. a preview before a confirmation prompt). */
+  humanError(text: string): void {
+    this.stderr.write(this.term(text));
+  }
+
+  /**
+   * Everything non-JSON passes through here: secrets redacted, untrusted
+   * control characters (terminal escapes) removed, our own styles rendered.
+   */
+  private term(text: string): string {
+    return sanitizeForTerminal(redact(text, this.secrets));
   }
 
   /** Progress and informational messages (stderr; silenced by --quiet). */
   info(message: string): void {
-    if (!this.options.quiet) this.stderr.write(`${redact(message, this.secrets)}\n`);
+    if (!this.options.quiet) this.stderr.write(this.term(`${message}\n`));
   }
 
   warn(message: string): void {
-    this.stderr.write(`${style.yellow('warning')} ${redact(message, this.secrets)}\n`);
+    this.stderr.write(this.term(`${style.yellow('warning')} ${message}\n`));
   }
 
   /** HTTP/debug logging, only with --verbose. */
   debug(message: string): void {
-    if (this.options.verbose) this.stderr.write(`${style.dim(redact(message, this.secrets))}\n`);
+    if (this.options.verbose) this.stderr.write(this.term(`${style.dim(message)}\n`));
   }
 
   /** Report a failure on stderr; returns the exit code to use. */
@@ -85,8 +98,8 @@ export class Output {
       ];
       if (payload.error.hint) lines.push(`${style.dim('hint')}  ${payload.error.hint}`);
       if (this.options.verbose && e.cause instanceof Error && e.cause.stack)
-        lines.push(style.dim(redact(e.cause.stack, this.secrets)));
-      this.stderr.write(`${lines.join('\n')}\n`);
+        lines.push(style.dim(e.cause.stack));
+      this.stderr.write(this.term(`${lines.join('\n')}\n`));
     } else {
       this.stderr.write(`${JSON.stringify(payload)}\n`);
     }

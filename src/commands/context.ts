@@ -18,6 +18,7 @@ import {
 } from '../auth/config.js';
 import { DougsError, ExitCode, LOGIN_HINT } from '../output/errors.js';
 import { Output, type Writer } from '../output/format.js';
+import { sanitizeForTerminal } from '../output/style.js';
 
 export interface GlobalOptions {
   json?: boolean;
@@ -193,7 +194,7 @@ export class Context {
           hint: 're-run with --yes to apply, or --dry-run to preview',
         },
       );
-    const answer = await this.runtime.ask(`${question} [y/N] `);
+    const answer = await this.runtime.ask(sanitizeForTerminal(`${question} [y/N] `));
     if (!/^y(es)?$/i.test(answer.trim()))
       throw new DougsError('CANCELLED', 'Cancelled; nothing was changed', {
         exitCode: ExitCode.usage,

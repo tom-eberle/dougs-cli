@@ -5,20 +5,14 @@ import { uploadName } from '../api/dougs.js';
 import type { Operation } from '../api/schemas.js';
 import { DougsError, ExitCode } from '../output/errors.js';
 import { analyzeDocumentText, analyzeFilename, extractPdfText } from '../pdf/extract.js';
+import { UPLOAD_EXTENSIONS } from '../plan/attachments.js';
 import type { StepDraft } from '../plan/types.js';
 import { daysBetween } from '../util/dates.js';
 import { sameCents } from '../util/money.js';
 import { merchantTokens, normalizeText } from '../util/text.js';
 
-export const RECEIPT_EXTENSIONS = new Set([
-  '.pdf',
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.webp',
-  '.heic',
-  '.gif',
-]);
+/** Same allow-list as uploads: a matched file must be attachable. */
+export const RECEIPT_EXTENSIONS = UPLOAD_EXTENSIONS;
 
 /** Window, in days, of an operation date relative to the document date. */
 export const DATE_WINDOW = { before: 10, after: 40 } as const;
@@ -48,8 +42,16 @@ export async function collectFiles(inputs: readonly string[]): Promise<string[]>
     if (info.isDirectory()) {
       for (const entry of (await readdir(path)).sort())
         if (!entry.startsWith('.')) await visit(join(path, entry), false);
-    } else if (explicit || RECEIPT_EXTENSIONS.has(extname(path).toLowerCase())) {
+    } else if (RECEIPT_EXTENSIONS.has(extname(path).toLowerCase())) {
       out.push(resolve(path));
+    } else if (explicit) {
+      throw new DougsError(
+        'USAGE',
+        `Not a receipt file (${[...RECEIPT_EXTENSIONS].join(', ')}): ${path}`,
+        {
+          exitCode: ExitCode.usage,
+        },
+      );
     }
   };
   for (const input of inputs) await visit(input, true);

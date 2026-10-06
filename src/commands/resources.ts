@@ -45,12 +45,26 @@ export function exportRow(op: Operation): ExportRow {
   };
 }
 
+/** Free-text columns that come from bank data and users, never numbers. */
+const TEXT_COLUMNS = new Set<string>(['wording', 'memo', 'category', 'category_group']);
+
+/**
+ * Spreadsheet formula injection guard (OWASP "CSV injection"): a text cell
+ * starting with = + - @ tab or CR is prefixed with a single quote so Excel,
+ * LibreOffice and Sheets show it as text instead of evaluating it.
+ */
+export function neutralizeFormula(value: string): string {
+  return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
+}
+
 export function toCsv(rows: readonly ExportRow[]): string {
-  const cell = (v: unknown) => {
-    const s = v === null || v === undefined ? '' : String(v);
+  const cell = (column: string, v: unknown) => {
+    let s = v === null || v === undefined ? '' : String(v);
+    if (TEXT_COLUMNS.has(column)) s = neutralizeFormula(s);
     return /[",\r\n]/.test(s) ? `"${s.replaceAll('"', '""')}"` : s;
   };
-  return `${[EXPORT_COLUMNS.join(','), ...rows.map((r) => EXPORT_COLUMNS.map((c) => cell(r[c])).join(','))].join('\n')}\n`;
+  const lines = rows.map((r) => EXPORT_COLUMNS.map((c) => cell(c, r[c])).join(','));
+  return `${[EXPORT_COLUMNS.join(','), ...lines].join('\n')}\n`;
 }
 
 export function registerResourceCommands(program: Command): void {

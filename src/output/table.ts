@@ -1,4 +1,4 @@
-import { style, visibleLength } from './style.js';
+import { style, styledTokens, visibleLength } from './style.js';
 
 export interface Column<T> {
   header: string;
@@ -9,16 +9,31 @@ export interface Column<T> {
   max?: number;
 }
 
-const CONTROL = /[\u0000-\u001f\u007f]/g;
+/** C0, DEL and C1 controls: a cell is one line, and untrusted text must not drive the terminal. */
+const CONTROL = /[\u0000-\u001f\u007f-\u009f]/g;
+const CONTROL_EXCEPT_NEWLINE = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g;
 
 function clean(text: string): string {
   return text.replace(CONTROL, ' ');
 }
 
+/** Cut to `width` visible characters, keeping style tokens so colours stay balanced. */
 function truncate(text: string, width: number): string {
   if (visibleLength(text) <= width) return text;
-  if (width <= 1) return '…'.slice(0, width);
-  return `${[...text].slice(0, width - 1).join('')}…`;
+  if (width < 1) return '';
+  let budget = width - 1;
+  const kept: string[] = [];
+  let ellipsisAt = 0;
+  for (const { token, visible } of styledTokens(text)) {
+    if (!visible) kept.push(token);
+    else if (budget > 0) {
+      kept.push(token);
+      budget--;
+      ellipsisAt = kept.length;
+    }
+  }
+  kept.splice(ellipsisAt, 0, '…');
+  return kept.join('');
 }
 
 function pad(text: string, width: number, align: 'left' | 'right'): string {
@@ -69,5 +84,7 @@ export function renderTable<T>(
 /** Two-column "key  value" block for single objects. */
 export function renderKeyValues(entries: [string, string][]): string {
   const width = Math.max(0, ...entries.map(([k]) => k.length));
-  return entries.map(([k, v]) => `${style.dim(k.padEnd(width))}  ${clean(v)}`).join('\n');
+  return entries
+    .map(([k, v]) => `${style.dim(k.padEnd(width))}  ${v.replace(CONTROL_EXCEPT_NEWLINE, ' ')}`)
+    .join('\n');
 }

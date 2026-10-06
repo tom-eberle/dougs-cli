@@ -5,6 +5,7 @@ import type { OperationFilter, OperationRecord } from '../api/dougs.js';
 import { VAT_EXEMPT_KINDS } from '../api/schemas.js';
 import { usageError } from '../output/errors.js';
 import { style } from '../output/style.js';
+import { resolveUpload } from '../plan/attachments.js';
 import { observe } from '../plan/diff.js';
 import { type SetChanges, type StepDraft, setChangesSchema } from '../plan/types.js';
 import { FRENCH_VAT_RATES } from '../util/money.js';
@@ -255,22 +256,27 @@ export function registerOpsCommands(program: Command): void {
         .description(
           'Upload documents to an operation (a leading "<digits>_" is stripped from the shown name)',
         )
-        .option('--name <name>', 'Display name in Dougs (single file only)'),
+        .option('--name <name>', 'Display name in Dougs (single file only)')
+        .option('--allow-any-path', 'Allow files outside the current directory'),
     ),
-    'ops attach 10001 ./invoices/2026-08-hetzner.pdf --yes',
+    'ops attach 10001 ./invoices/2026-08-nimbus.pdf --yes',
     'ops attach 10001 ./10001_receipt.pdf --dry-run',
   ).action(
     async (
       id: string,
       files: string[],
-      o: { name?: string; dryRun?: boolean; yes?: boolean },
+      o: { name?: string; dryRun?: boolean; yes?: boolean; allowAnyPath?: boolean },
       cmd: Command,
     ) => {
       if (o.name && files.length !== 1) throw usageError('--name needs exactly one file');
       const ctx = contextOf(cmd);
+      // Fail fast on any disallowed file, before previewing or uploading anything.
       for (const file of files)
-        if (!(await stat(file).catch(() => null))?.isFile())
-          throw usageError(`Not a file: ${file}`);
+        resolveUpload(file, {
+          baseDir: process.cwd(),
+          cwd: process.cwd(),
+          allowAnyPath: o.allowAnyPath,
+        });
       const drafts: StepDraft[] = files.map((file) => ({
         op: id,
         action: 'attach',

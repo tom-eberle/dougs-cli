@@ -168,16 +168,16 @@ describe('set: VAT rate, memo; validate; attach; detach', () => {
     });
   });
 
-  it('updates the memo with a plain operation update', async () => {
+  it('updates the memo, sending the unchanged main breakdown as updatedBreakdown', async () => {
     const api = new FakeDougs([rawOp({ id: 11 })]);
     await executeStep(
       dougsFor(api),
       step({ op: '11', action: 'set', set: { memo: 'Annual plan' }, why: 'x' }),
     );
     expect(api.ops.get('11')!.memo).toBe('Annual plan');
-    expect(
-      (opPosts(api)[0]!.body as { updatedBreakdown?: unknown }).updatedBreakdown,
-    ).toBeUndefined();
+    const body = opPosts(api)[0]!.body as RawOpFixture & { updatedBreakdown?: unknown };
+    expect(body.updatedBreakdown).toEqual(body.breakdowns[0]);
+    expect(body.breakdowns[0]!.categoryId).toBe(77);
   });
 
   it('validates an operation', async () => {
@@ -195,10 +195,10 @@ describe('set: VAT rate, memo; validate; attach; detach', () => {
     const api = new FakeDougs([rawOp({ id: 13 })]);
     const dougs = dougsFor(api);
     const s = step({ op: '13', action: 'attach', file, why: 'x' });
-    expect((await executeStep(dougs, s)).status).toBe('applied');
+    expect((await executeStep(dougs, s, { baseDir: dir })).status).toBe('applied');
     const form = api.writes[0]!.body as FormData;
     expect((form.get('file') as File).name).toBe('invoice-aug.pdf');
-    expect((await executeStep(dougs, s)).status).toBe('skipped');
+    expect((await executeStep(dougs, s, { baseDir: dir })).status).toBe('skipped');
   });
 
   it('detaches an attachment', async () => {

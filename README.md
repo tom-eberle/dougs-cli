@@ -72,6 +72,11 @@ dougs apply fixes.plan.json                  # asks once, writes, verifies every
 `apply` is idempotent: steps already done are skipped, so re-running a half-applied plan is safe.
 If an operation changed since the plan was made, its step is skipped unless you pass `--force`.
 
+Plans are data, so they are treated as untrusted: an `attach` step can only upload receipt files
+(`.pdf .png .jpg .jpeg .heic .webp`) from the plan's directory or the current directory, and the
+preview and confirmation list the absolute path of every file that would be uploaded. Use
+`--allow-any-path` only for plans you wrote or trust.
+
 ### The morning worklist — `dougs todo`
 
 One list of everything that needs a human: missing receipts (with the 150 € full-invoice rule),
@@ -244,6 +249,9 @@ and retries.
 - Requests identify themselves (`User-Agent: dougs-cli/<version>`), run at most 4 at a time, and
   only GETs are retried (on 429/5xx/network errors, with backoff).
 - Document downloads follow Dougs' signed storage links without sending your cookie to them.
+- Text from Dougs (bank wordings, memos, file names) is stripped of terminal control characters
+  before it is printed, and `export --format csv` neutralizes cells that a spreadsheet would run
+  as formulas.
 
 ## Development
 

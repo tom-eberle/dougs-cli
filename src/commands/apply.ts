@@ -6,6 +6,7 @@ import { style } from '../output/style.js';
 import { applyPlan } from '../plan/apply.js';
 import { planSchema } from '../plan/types.js';
 import { contextOf } from './context.js';
+import { confirmationQuestion } from './mutate.js';
 import { renderApplyReport } from './render.js';
 import { addMutationOptions, withExamples } from './shared.js';
 
@@ -48,6 +49,10 @@ export function registerApplyCommand(program: Command): void {
         )
         .option('--force', 'Apply steps even if the operation changed since the plan was made')
         .option('--continue-on-error', 'Keep going after a failed step')
+        .option(
+          '--allow-any-path',
+          'Let attach steps upload files outside the plan directory and the current directory',
+        )
         .option('--report <file>', 'Also write the JSON result report (audit log) to this file'),
     ),
     'apply receipts.plan.json --dry-run',
@@ -61,6 +66,7 @@ export function registerApplyCommand(program: Command): void {
         yes?: boolean;
         force?: boolean;
         continueOnError?: boolean;
+        allowAnyPath?: boolean;
         report?: string;
       },
       cmd: Command,
@@ -75,18 +81,24 @@ export function registerApplyCommand(program: Command): void {
         force: o.force,
         continueOnError: true,
         baseDir,
+        allowAnyPath: o.allowAnyPath,
       });
+      // A plan that tries to upload a disallowed file is refused as a whole.
+      const unsafe = preview.results.find((r) => r.error?.code === 'UNSAFE_ATTACHMENT');
+      if (unsafe?.error && !o.dryRun)
+        throw new DougsError('UNSAFE_ATTACHMENT', `Step ${unsafe.step}: ${unsafe.error.message}`, {
+          exitCode: ExitCode.usage,
+          hint: unsafe.error.hint,
+        });
       let report = preview;
       if (!o.dryRun && preview.meta.planned > 0) {
-        if (ctx.out.human) ctx.runtime.stderr.write(`${renderApplyReport(preview)}\n\n`);
-        await ctx.confirm(
-          `Apply ${preview.meta.planned} change(s) to company ${dougs.company}?`,
-          o.yes,
-        );
+        if (ctx.out.human) ctx.out.humanError(`${renderApplyReport(preview)}\n\n`);
+        await ctx.confirm(confirmationQuestion(preview, dougs.company), o.yes);
         report = await applyPlan(dougs, plan, {
           force: o.force,
           continueOnError: o.continueOnError,
           baseDir,
+          allowAnyPath: o.allowAnyPath,
           onResult: (r) =>
             ctx.out.info(
               style.dim(`  ${r.step} ${r.status}${r.error ? `: ${r.error.message}` : ''}`),

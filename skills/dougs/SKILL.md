@@ -99,6 +99,9 @@ dougs ops validate 10001 --yes --json
 
 - Actions: `set` (`category`, `vatRate` in percent, `vatExempt`, `memo`), `attach` (`file`
   relative to the plan, optional `name`), `detach` (`attachmentId`), `validate`.
+- Attach files must be receipts (`.pdf .png .jpg .jpeg .heic .webp`) inside the plan's directory or
+  the current directory; otherwise `apply` refuses the whole plan (`UNSAFE_ATTACHMENT`, exit 2).
+  Put the plan next to the documents rather than asking for `--allow-any-path`.
 - Add `expect` with the values you saw (from `ops get --json`) so `apply` skips the step if
   someone changed the operation meanwhile. Use `"category": -1` for uncategorized.
 - Split operations (several breakdowns) need `"breakdown": "<id>"` on `set` steps.
