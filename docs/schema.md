@@ -31,6 +31,7 @@ Conventions everywhere:
 | `direction` | `expense` \| `income` | |
 | `original` | `{ amount, currency }` \| null | Native amount for foreign-currency lines |
 | `validated` | boolean | Validated in Dougs |
+| `locked` | boolean | Locked in Dougs (manually or by a closed period); the CLI will not edit it |
 | `memo` | string \| null | |
 | `account` | `{ id, name }` \| null | Bank account |
 | `breakdowns` | `breakdown[]` | Accounting lines |
@@ -46,11 +47,13 @@ Conventions everywhere:
 | `isCounterpart` | boolean | The automatic bank side; never edited |
 | `section` | string \| null | `main`, `ecommerceDispatch:fees`, … |
 | `direction` | `expense` \| `income` | Can differ from the operation (fees inside a payout) |
+| `isRefund` | boolean | A refund: reverses VAT of the opposite flow |
 | `category` | `{ id, name, path }` \| null | `null` = uncategorized (Dougs `-1`); `path` = `[group, name]` |
 | `amount` | number | Gross (TTC) |
 | `amountExcludingVat` | number | Net (HT) |
 | `vatRate` | number \| null | Percent |
 | `vatAmount` | number | |
+| `recoverableVat` | number | Deductible part (lower for partially recoverable categories); HT + this = TTC |
 | `vatExemptReason` | string \| null | See conventions |
 
 ### `attachment`
@@ -78,13 +81,19 @@ Conventions everywhere:
 }
 ```
 
-Reason codes: `MISSING_RECEIPT` (severity `error` above 150 €, where a full invoice is mandatory),
-`UNCATEGORIZED`, `UNVALIDATED`, `VAT_SUSPECT` (with `rule`), `RULE_MATCH`.
+Reason codes: `OVERDUE_DECLARATION` (listed first; such items have `op: null` and a
+`declaration` `{ id, type, label, periodStart, periodEnd, dueDate, isLate, status }`),
+`MISSING_RECEIPT` (severity `error` above 150 €, where a full invoice is mandatory),
+`UNCATEGORIZED`, `UNVALIDATED`, `VAT_SUSPECT` (with `rule`), `RULE_MATCH`. Suggestions only come
+from strong evidence unless `--include-warnings`.
 
 ## `finding` (`vat check`, `close-check`)
 
-`{ code, severity, detail, op, evidence?, fix?, related? }` — `fix` is a plan step without an id,
-present only when the fix is unambiguous; `related` lists other operation ids (duplicates).
+`{ code, severity, detail, op, declaration?, evidence?, fix?, related? }` — `op` is null for
+declaration findings; `fix` is a plan step without an id. Severity `error` means strong evidence
+(Dougs' reverse-charge code, an explicit reverse-charge invoice with 0 VAT, or a vendor from your
+rules file); plans include warning-level fixes only with `--include-warnings`. `related` lists
+other operation ids (duplicates). `evidence.strength` is `strong` or `weak`.
 
 | Code | Meaning |
 |---|---|
@@ -96,6 +105,7 @@ present only when the fix is unambiguous; `related` lists other operation ids (d
 | `MISSING_RECEIPT`, `UNCATEGORIZED`, `UNVALIDATED` | As in `todo` (close-check) |
 | `POSSIBLE_DUPLICATE` | Same merchant and amount within 3 days (`warning` if same day and wording) |
 | `DOCUMENT_AMOUNT_MISMATCH` | Attached document total matches neither TTC, HT nor the original-currency amount |
+| `OVERDUE_DECLARATION` | A declaration Dougs marks as late is not filed (close-check) |
 
 `evidence.document` (when documents were read): `{ source: "vendor-invoice" | "pdf", zone, country,
 vatAmount, reverseCharge, totals, currency }`.
@@ -135,7 +145,8 @@ vatAmount, reverseCharge, totals, currency }`.
 ```jsonc
 {
   "meta": { "company": "999999", "createdBy": "…", "dryRun": false, "total": 4,
-            "applied": 2, "planned": 0, "skipped": 1, "failed": 1, "pending": 0,
+            "applied": 2, "planned": 0, "skipped": 1, "conflicts": 0, "failed": 1,
+            "sideEffects": 0, "pending": 0,
             "startedAt": "…", "finishedAt": "…" },
   "results": [
     { "step": "s1", "op": "10001", "action": "attach", "status": "applied", "why": "…",
@@ -150,14 +161,18 @@ vatAmount, reverseCharge, totals, currency }`.
 
 Attach results also carry `file`: the resolved absolute path that is (or would be) uploaded.
 
-Statuses: `applied`, `planned` (dry run), `skipped` (already satisfied, or changed since
-planning), `failed`, `pending` (not attempted after a failure without `--continue-on-error`).
+Statuses: `applied`, `planned` (dry run), `skipped` (already satisfied), `conflict` (the
+operation changed since planning; exit 7), `failed` (with `error`; a `PARTIALLY_APPLIED` failure
+lists the saved changes in `changes`), `pending` (not attempted after a failure without
+`--continue-on-error`). Applied results may carry `sideEffects`: changes Dougs made that the step
+did not ask for.
 
 ## Other outputs
 
 - `vat-summary`: `{ meta: { month, estimate: true, operations, unvalidated, uncategorized,
-  declaration }, collectedByRate: [{ rate, base, vat }], lines: [{ box, label, estimate, declared,
-  difference }], notes }`.
+  declaration: { id, label, status, filed, dueDate, isLate, hasForm, corrective } }, collectedByRate:
+  [{ rate, base, vat }], lines: [{ box, label, estimate, declared, difference }], notes }` —
+  `declared` is the filed figure, or Dougs' draft for an open month.
 - `receipts-match`: `{ meta, matched: [{ file, best, runnersUp }], ambiguous: [{ file,
   candidates, reason }], unmatched: [{ file, reason, detected }], alreadyAttached: [{ file, op }] }`.
 - `close-check`: `{ meta: { year, from, to, operations, documentsChecked, counts, bySeverity },
@@ -176,9 +191,9 @@ In JSON mode a failure prints one line on **stderr**:
 |---|---|---|
 | 0 | OK (also for reports with findings) | |
 | 1 | Unexpected | `UNEXPECTED` |
-| 2 | Usage, or confirmation required | `USAGE`, `CONFIRMATION_REQUIRED`, `PLAN_INVALID`, `UNSAFE_ATTACHMENT`, `RULES_INVALID`, `COMPANY_REQUIRED`, `SPLIT_OPERATION`, `CATEGORY_REQUIRED` |
+| 2 | Usage, or confirmation required | `USAGE`, `CONFIRMATION_REQUIRED`, `PLAN_INVALID`, `UNSAFE_ATTACHMENT`, `FILED_PERIOD`, `NOT_VALIDATABLE`, `RULES_INVALID`, `COMPANY_REQUIRED`, `SPLIT_OPERATION`, `CATEGORY_REQUIRED` |
 | 3 | Auth missing or expired | `AUTH_MISSING`, `AUTH_EXPIRED`, `COOKIE_MISSING`, `KEYCHAIN_UNAVAILABLE` |
 | 4 | Not found | `NOT_FOUND` |
-| 5 | Rejected by Dougs | `API_REJECTED`, `FORBIDDEN`, `VERIFY_FAILED`, `EXEMPTION_UNAVAILABLE` |
-| 6 | Network, 5xx after retries, or unexpected API shape | `NETWORK`, `API_UNAVAILABLE`, `API_SHAPE` |
-| 7 | Plan partially failed | (see the report) |
+| 5 | Rejected by Dougs | `API_REJECTED`, `FORBIDDEN`, `LOCKED`, `VERIFY_FAILED`, `EXEMPTION_UNAVAILABLE`, `PARTIALLY_APPLIED` |
+| 6 | Network, 5xx after retries, or unexpected API shape | `NETWORK`, `API_UNAVAILABLE`, `API_SHAPE`, `PERIODS_UNKNOWN` |
+| 7 | Plan partially failed or hit conflicts | (see the report) |

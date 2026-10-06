@@ -107,8 +107,8 @@ Uploaded filename strips a leading `{digits}_` prefix (Dougs displays the upload
 - **Reverse-charge suspects**: supplier known (vendor registry, §4.4) or detected
   (attached PDF shows a non-FR VAT number / "reverse charge" / "autoliquidation" /
   0.00 VAT) as foreign, but Dougs booked deductible French VAT → suggest
-  `set vat-exempt outside-eu|inside-eu`. (Real recurring issue: Dougs auto-books US
-  SaaS like Cloudflare at 20 % deductible VAT.)
+  `set vat-exempt outside-eu|inside-eu`. (A common issue: foreign SaaS charges can get
+  auto-booked with 20 % deductible French VAT although the supplier invoiced none.)
 - zero-VAT expense without `vatExemptionReason`.
 - PDF VAT amount ≠ Dougs VAT amount (when a PDF is attached; uses cached text extraction).
 `--plan` writes fix steps for the unambiguous cases.

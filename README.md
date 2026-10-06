@@ -24,7 +24,7 @@ ID     DATE        WORDING               AMOUNT  DETAIL
 VAT to check (1)
 10003  2026-08-09  FICTICLOUD INC        -24.00  4.00 € of deductible French VAT booked, but … [fix]
 
-5 operations need attention: 3 missing receipts · 1 uncategorized · 1 VAT to check
+5 items need attention: 3 missing receipts · 1 uncategorized · 1 VAT to check
 ```
 
 ## Install
@@ -70,7 +70,19 @@ dougs apply fixes.plan.json                  # asks once, writes, verifies every
 ```
 
 `apply` is idempotent: steps already done are skipped, so re-running a half-applied plan is safe.
-If an operation changed since the plan was made, its step is skipped unless you pass `--force`.
+If an operation changed since the plan was made, its step is a `conflict` (exit 7) unless you pass
+`--force`. After every write the operation is re-read: anything else Dougs changed is reported as
+a side effect.
+
+Guard-rails on every change:
+
+- **Locked operations are never touched** (`LOCKED`); dougs-cli never asks Dougs to unlock a ledger.
+- **Filed periods are protected**: edits and validations in a month whose VAT return is filed, or
+  in a closed year, are refused and left out of plans unless `--allow-filed-periods`.
+- **Validation is refused** when Dougs would show errors on the operation.
+- **Fixes need strong evidence**: plans only include VAT fixes backed by Dougs' reverse-charge
+  code, an explicit reverse-charge invoice, or a vendor in your rules file; add
+  `--include-warnings` for the rest after reviewing them.
 
 Plans are data, so they are treated as untrusted: an `attach` step can only upload receipt files
 (`.pdf .png .jpg .jpeg .heic .webp`) from the plan's directory or the current directory, and the
@@ -79,7 +91,8 @@ preview and confirmation list the absolute path of every file that would be uplo
 
 ### The morning worklist — `dougs todo`
 
-One list of everything that needs a human: missing receipts (with the 150 € full-invoice rule),
+One list of everything that needs a human: overdue declarations first, then missing receipts
+(with the 150 € full-invoice rule),
 uncategorized and unvalidated operations, VAT suspects and operations your local rules would
 change. Fast enough to run daily (it never downloads documents).
 
@@ -131,8 +144,9 @@ dougs vat summary --month 2026-08
 
 Estimates the CA3 boxes from operations — collected VAT by rate, reverse-charge bases (EU and
 non-EU) and the self-assessed VAT, deductible VAT on goods/services and fixed assets, credit or
-amount due. For months Dougs has already filed, the declared figures are shown side by side with
-the differences. It is an estimate, clearly labelled as such.
+amount due. Dougs' own figures are shown side by side with the differences: the filed return, or
+Dougs' draft for a month that is still open, together with its due date and whether it is
+overdue. It is an estimate, clearly labelled as such.
 
 ### Your own categorisation rules — `dougs rules`
 
@@ -158,7 +172,7 @@ differ get a step.
 
 ```sh
 dougs rules init                                   # infer a starter file from your validated history
-dougs rules apply --unvalidated-only --plan rules.plan.json
+dougs rules apply --plan rules.plan.json             # unvalidated operations by default
 dougs categories list --search logiciel            # find category ids
 ```
 

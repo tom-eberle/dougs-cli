@@ -40,12 +40,39 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
   `updatedBreakdown`, like the reference scripts (the web app omits it; the server accepts both).
 - **Validation** is the same update call with `validated: true` — there is no separate endpoint.
 - Every write is followed by a re-read; a 200 that changed nothing is reported as `VERIFY_FAILED`.
+- **Never `?force=true`.** The web app only sends it after a locked-ledger error, for accountants,
+  after a confirmation dialog: it unlocks the ledger. The CLI refuses `manuallyLocked` /
+  `lockedByDate` operations with `LOCKED` (exit 5) in previews and at apply time, and maps the
+  server's locked response to the same error. There is no unlock flag in v0.1.
+- **Side effects are reported.** After each write the whole operation (every breakdown, memo,
+  validation, attachments) is compared before/after; changes the step did not ask for are listed
+  as `sideEffects` (e.g. Dougs un-validating an edited operation).
+- **Partial writes are visible.** If the VAT-exemption second pass is impossible, the first pass is
+  rolled back; if anything still changed when a step fails, it fails as `PARTIALLY_APPLIED` and
+  its `changes` list what was saved.
+- **Validation** is refused (`NOT_VALIDATABLE`, exit 2) when Dougs would show errors.
+- **Filed periods are protected.** `set` and `validate` steps on operations in a month whose CA3
+  is filed, or in a closed accounting year, are refused (`FILED_PERIOD`, exit 2) and left out of
+  generated plans unless `--allow-filed-periods`. *Deviation from a literal reading of the review:*
+  `attach`/`detach` (and, for locks, the same) stay allowed, because justifying documents don't
+  change accounting lines and attaching receipts to past months is the core of `receipts match`.
+  If the period list cannot be loaded, mutations fail closed (`PERIODS_UNKNOWN`).
+- **Concurrent 401s share one refresh.** All requests that hit 401/403 await a single browser
+  cookie refresh and retry once with the new session.
+- **Keychain reads time out after 15 s.** *Deviation:* the review suggested skipping the
+  transparent refresh when stdin is not a terminal. A timeout keeps the useful case (an
+  already-authorized keychain item refreshes silently for agents) while guaranteeing a prompt
+  nobody answers cannot hang a run.
 
 ## Plans and apply
 
-- `expect` is checked per field. Fields the step itself changes may also hold the step's target
-  (or an intermediate value), so a half-applied step (e.g. VAT zeroed but no exemption reason yet)
-  resumes instead of being reported as "changed by someone else".
+- `expect` records only the fields a step touches (category, plus VAT fields for VAT steps,
+  memo for memo steps, `validated` for validation), so attaching a receipt or validating an
+  operation between planning and applying doesn't void an unrelated VAT fix. Fields the step
+  itself changes may also hold the step's target (or an intermediate value), so a half-applied
+  step resumes instead of being reported as "changed by someone else".
+- A step whose expectation no longer holds gets status `conflict` (not `skipped`), and `apply`
+  exits 7 so agents can tell "already done" from "not done because something changed".
 - Attach paths in plan files are **relative to the plan file**, so a plan and its documents can be
   moved together. Attach steps need no `expect`; the same file name already attached = satisfied.
 - Single-op commands (`ops set/attach/detach/validate`) build an in-memory plan and run it through
@@ -57,6 +84,12 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
   checks live in `vat check` and `close-check`.
 - **Document evidence prefers Dougs' own invoice reading** (`GET /vendor-invoices/{id}`: supplier
   country, VAT amount, reverse-charge code `AE`) and falls back to PDF text extraction.
+- **The invoice beats the vendor list.** Billing entities vary by customer region, so a document's
+  supplier country wins over the built-in registry, which is only used without a document.
+- **Fixes need strong evidence.** Severity `error` with a plannable fix only for Dougs'
+  reverse-charge code `AE`, an explicit reverse-charge invoice with 0 VAT, or a vendor from the
+  user's rules file. Other suspects are warnings; their fixes are planned only with
+  `--include-warnings`, and the PDF VAT-number heuristic alone never produces a fix.
 - **An invoice that charges VAT is authoritative**: a foreign supplier whose invoice shows VAT
   (e.g. an EU company registered for French VAT) is not flagged as reverse charge.
 - **Invoice VAT is only compared when the invoice total equals the operation amount**: one
@@ -65,9 +98,16 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
   rather than a separate code, so agents filtering on the code see every missing receipt.
 - **`close-check --year`** uses the Dougs accounting year that closes in that year when one
   exists, otherwise the calendar year.
-- **`vat summary`** compares against the filed CA3 (whole euros) only for months Dougs has filed;
-  open months have no figures server-side. Box 22 comes from the previous filed month's box 27.
-  Reverse-charge purchases are self-assessed at 20 %.
+- **`vat summary`** compares with Dougs' figures in whole euros: the filed return (the latest one
+  when there is a corrective return), or Dougs' own draft for open months. It reports the
+  declaration status, due date and lateness. Box 22 comes from the previous month's box 27 (marked
+  provisional when that month is still a draft). Refund breakdowns reverse VAT of the opposite
+  flow; only recoverable VAT is counted as deductible. Reverse-charge purchases are self-assessed
+  at 20 %.
+- **Overdue declarations** (Dougs `isLate`, not filed) are `OVERDUE_DECLARATION` items at the top
+  of `todo` (with `op: null` and a `declaration`) and findings in `close-check`.
+- **`rules apply` defaults to unvalidated operations**; `--include-validated` or `--validated`
+  widen it. Filed-period protection applies on top.
 - **`receipts download`** skips a file that already exists with a non-zero size (the API does not
   expose remote sizes without downloading).
 - **Rules: first match wins**; only fields that differ produce a plan step. `rules init` keeps
@@ -80,6 +120,9 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
   (symlinks followed), and only from the plan's directory or the current directory unless
   `--allow-any-path` is given. A plan with any disallowed upload is refused as a whole before
   anything is written. Previews and the confirmation prompt show each file's absolute path.
+- **Uploads are read once.** At apply time the file is resolved (realpath, extension, folder),
+  opened with `O_NOFOLLOW` and checked to be the same inode, and those bytes are uploaded with a
+  MIME type — the path is never re-read later (no check/use race).
 - **CSV export neutralizes formulas**: text columns (wording, memo, category, category_group)
   starting with `= + - @`, tab or CR get a leading `'`. Numbers stay numbers; JSON is untouched.
 - **No terminal escapes from data.** All human output (tables, key/values, errors, prompts,
@@ -90,5 +133,8 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
 ## Housekeeping
 
 - The User-Agent links to the npm package page until a public repository URL exists.
+- Plan files are written 0600 like reports: they contain wordings and amounts.
+- A failed PDF extraction is not cached, so it is retried next time.
+- `npm publish` runs `npm run check` first (`prepublishOnly`).
 - `node:sqlite` is loaded lazily (only for `login --from-browser` and cookie refresh) with its
   Node 22 experimental warning suppressed, so other commands keep stderr clean.

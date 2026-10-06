@@ -30,6 +30,14 @@ First release.
 - CSV export neutralizes spreadsheet formulas in text columns.
 - Human output strips terminal control characters coming from data; JSON is never altered.
 
+- Never sends `?force=true`: locked operations are refused (`LOCKED`), filed VAT periods and
+  closed years are protected (`--allow-filed-periods`), validation is refused when Dougs would show
+  errors, and every write is checked for side effects and partial application.
+- VAT fixes are planned only on strong evidence (`--include-warnings` for the rest); the attached
+  invoice wins over the built-in vendor list.
+- `vat summary` shows Dougs' draft for open months, the declaration status and lateness;
+  `todo`/`close-check` report overdue declarations.
+
 ### Building blocks
 - `ops list|get|set|attach|detach|validate|download`, `receipts download`, `categories list`,
   `accounts list`, `export` (CSV/JSON/JSONL), `api` (authenticated escape hatch).

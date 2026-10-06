@@ -35,7 +35,9 @@ dougs categories list --search <text> --json   # category ids for --category / r
 ```sh
 dougs todo --json --limit 100
 ```
-Each item: `op` (normalized operation), `reasons[]` (`MISSING_RECEIPT` — severity `error` means
+Items with `reasons[0].code == "OVERDUE_DECLARATION"` come first (`op: null`, see
+`declaration`): tell the user, they have deadlines. Other items: `op` (normalized operation),
+`reasons[]` (`MISSING_RECEIPT` — severity `error` means
 > 150 € and a full invoice is required; `UNCATEGORIZED`; `UNVALIDATED`; `VAT_SUSPECT` with
 `rule`; `RULE_MATCH`), optional `suggestion[]` (plan steps). `dougs todo --plan todo.plan.json`
 writes the suggestions as a plan.
@@ -54,10 +56,12 @@ dougs vat check --from 2026-08-01 --to 2026-08-31 --json
 dougs vat check --from 2026-08-01 --to 2026-08-31 --plan vat.plan.json
 dougs vat summary --month 2026-08 --json
 ```
-`REVERSE_CHARGE_SUSPECT` = a supplier established outside France (built-in registry, rules file,
-or the invoice itself) booked with deductible French VAT, or exempted with the wrong zone. The
-fix sets `vatExempt: outside-eu | inside-eu`. `vat summary` is an estimate; for filed months it
-shows the declared figures and differences.
+`REVERSE_CHARGE_SUSPECT` = a supplier established outside France booked with deductible French
+VAT, or exempted with the wrong zone. Severity `error` = strong evidence (Dougs' reverse-charge
+code, an explicit reverse-charge invoice, a vendor in the rules file); plans contain only those.
+Warnings (built-in vendor list, Dougs' reading of the supplier country) need the user's review;
+only then use `--include-warnings`. `vat summary` is an estimate, shown beside Dougs' filed return
+or draft.
 
 **Rules**
 ```sh
@@ -107,6 +111,15 @@ dougs ops validate 10001 --yes --json
 - Split operations (several breakdowns) need `"breakdown": "<id>"` on `set` steps.
 - Check it with `dougs apply plan.json --dry-run --json` (exit 2 + `PLAN_INVALID` explains schema
   errors) before asking for approval.
+
+## Refusals to expect (don't work around them silently)
+
+- `LOCKED` (exit 5): the operation is locked in Dougs; only an accountant can unlock it.
+- `FILED_PERIOD` (exit 2): its VAT return is filed or the year is closed. Ask the user before
+  `--allow-filed-periods`; such changes usually require a corrective return.
+- `NOT_VALIDATABLE` (exit 2): fix the reported problems first.
+- `conflict` steps (apply exit 7): the operation changed since planning; re-plan.
+- `sideEffects` on applied steps: report them to the user.
 
 ## Data notes
 

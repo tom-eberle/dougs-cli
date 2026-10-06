@@ -93,7 +93,7 @@ Notes: `amount` is always positive (direction is `isInbound`); uncategorized bre
 ### `GET /companies/{c}/operations/{id}`
 One operation, same shape.
 
-### `POST /companies/{c}/operations/{id}?force=true` — update (also: validate)
+### `POST /companies/{c}/operations/{id}` — update (also: validate)
 Body: the **full operation**, with the edited breakdown replaced inside `breakdowns`, plus
 `updatedBreakdown` set to that breakdown. The server reads the edit from `breakdowns`;
 `updatedBreakdown` only flags which one changed. Sending only `updatedBreakdown` returns 200 and
@@ -109,8 +109,22 @@ changes nothing — always re-read to verify.
   `exemption:outbound:outsideEuropeanUnion` | `exemption:outbound:insideEuropeanUnion` |
   `exemption:outbound:noAccountingDocument`. Set the category first: uncategorized breakdowns
   have no associations.
-- **Memo:** the full operation with `memo` changed (no `updatedBreakdown`), as the web app does.
-- **Validate:** the full operation with `validated: true` (no dedicated endpoint).
+- **Memo:** the full operation with `memo` changed. The web app sends no `updatedBreakdown`;
+  dougs-cli sends the unchanged main breakdown, like the reference scripts — the server accepts
+  both.
+- **Validate:** the full operation with `validated: true` (no dedicated endpoint). The web app
+  refuses to validate while the operation shows errors (`errors[]`, an uncategorized breakdown,
+  breakdowns that don't add up, a required exemption reason missing); so does the CLI.
+- **VAT recovery:** `vatAmountWithRecoverageRate` / `amountExcludingTaxesWithRecoverageRate` are
+  computed by the server from the category's recovery rate (partially recoverable VAT). Read them
+  for deductible VAT; don't send your own values when changing a VAT amount.
+- **Locks:** operations with `manuallyLocked` or `lockedByDate` are not editable. An edit touching
+  locked accounting lines fails with a 4xx and the header
+  `X-Message-Code: accountingLine.lockedByDateWithAccountingNumber`. The web app then offers
+  accountants (only) to retry with `?force=true`, which **unlocks the ledger**. dougs-cli never
+  sends `force` and reports `LOCKED` instead.
+- **Refunds:** breakdowns carry `isRefund`; a refund reverses VAT of the opposite flow (money back
+  from a supplier reduces deductible VAT).
 
 Related (seen in the bundle, unused): `GET …/operations/{id}/associations/vat-exemption-reasons`
 (sales exemption choices), `GET …/operations/{id}/breakdowns/{b}/available-categories`,
@@ -179,9 +193,12 @@ Light summaries. `status` is required: `completed`, `upcoming` or `ready_to_comp
 (several MB); avoid it.
 
 ### `GET /companies/{c}/declarations/{id}`
-One declaration. Filed CA3s carry `form`: box code → value in **whole euros**. Open months have
-`form: null` — the draft is only computed by a POST (`…/actions/generate-preview`), which the CLI
-does not call.
+One declaration with `form`: box code → value in **whole euros**. Filed CA3s carry the filed
+figures. **Open months (`upcoming`, `ready_to_complete`) also carry a fully computed draft form**,
+recomputed per period by Dougs; `dougs vat summary` shows it beside its own estimate. Summaries
+also give `dueDate` and `isLate` (overdue and not filed). Several `completed` CA3s for one month
+mean a corrective return; use the latest by `confirmedAt`. A draft's box 27 (credit to carry
+forward) is provisional until the month is filed.
 
 Box codes used by `dougs vat summary` (labels from `GET /declaration-templates/CA3-2026`):
 
@@ -204,7 +221,8 @@ Box codes used by `dougs vat summary` (labels from `GET /declaration-templates/C
 
 | Need | Why not in v0.1 |
 |---|---|
-| Draft CA3 figures for open months | Only produced by `POST …/declarations/{id}/actions/generate-preview`; the CLI computes its own estimate instead |
+| Regenerating a declaration (`POST …/declarations/{id}/actions/generate-preview`) | A write; the existing draft is read instead |
+| Unlocking locked ledgers (`?force=true` on updates) | Accountant action with ledger consequences; done in the web app only |
 | VAT assistant (`GET …/actions/vat-assistant`) | Shape is a UI wizard state; no stable data to expose |
 | Operation history (`GET …/operations/{id}/changes`) | Returns 403 for regular users |
 | Filing/confirming declarations (`…/declarations/{id}/actions/confirm`) | Out of scope: the CLI never files anything |
