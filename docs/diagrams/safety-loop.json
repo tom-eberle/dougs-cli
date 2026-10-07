@@ -1,0 +1,231 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Propose, review, apply",
+    "subtitle": "How every change reaches Dougs",
+    "output": "safety-loop.html",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "viewBox": [1040, 652],
+    "legend": {
+      "entries": {
+        "backend": {
+          "label": "dougs-cli"
+        },
+        "security": {
+          "label": "Guard-rail"
+        },
+        "database": {
+          "label": "File"
+        },
+        "cloud": {
+          "label": "Dougs"
+        },
+        "external": {
+          "label": "You"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "you",
+      "label": "You or your agent"
+    },
+    {
+      "id": "cli",
+      "label": "dougs CLI"
+    },
+    {
+      "id": "guards",
+      "label": "Guard-rails"
+    },
+    {
+      "id": "dougs",
+      "label": "Dougs"
+    }
+  ],
+  "phases": [
+    {
+      "id": "propose",
+      "label": "Propose (read-only)",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "review",
+      "label": "Review",
+      "fromCol": 2,
+      "toCol": 2,
+      "variant": "emphasis"
+    },
+    {
+      "id": "apply",
+      "label": "Apply, step by step",
+      "fromCol": 3,
+      "toCol": 5,
+      "variant": "security"
+    }
+  ],
+  "mainPath": ["run", "plan", "review", "apply", "guards", "write", "verify", "report"],
+  "nodes": [
+    {
+      "id": "run",
+      "lane": "you",
+      "col": 0,
+      "type": "external",
+      "label": "Run a workflow",
+      "sublabel": "vat check --plan",
+      "width": 150
+    },
+    {
+      "id": "review",
+      "lane": "you",
+      "col": 2,
+      "type": "external",
+      "label": "Review the plan",
+      "sublabel": "edit or drop steps",
+      "width": 150
+    },
+    {
+      "id": "report",
+      "lane": "you",
+      "col": 5,
+      "type": "external",
+      "label": "Read the report",
+      "sublabel": "exit 0, 5 or 7",
+      "width": 150
+    },
+    {
+      "id": "plan",
+      "lane": "cli",
+      "col": 1,
+      "type": "database",
+      "label": "Plan file",
+      "sublabel": "changes + expected values",
+      "width": 150
+    },
+    {
+      "id": "apply",
+      "lane": "cli",
+      "col": 3,
+      "type": "backend",
+      "label": "dougs apply",
+      "sublabel": "re-reads each operation",
+      "width": 150
+    },
+    {
+      "id": "verify",
+      "lane": "cli",
+      "col": 5,
+      "type": "backend",
+      "label": "Verify",
+      "sublabel": "re-read, list side effects",
+      "width": 150
+    },
+    {
+      "id": "guards",
+      "lane": "guards",
+      "col": 3,
+      "type": "security",
+      "label": "Check guards",
+      "sublabel": "locked, filed period, changed?",
+      "width": 150
+    },
+    {
+      "id": "skip",
+      "lane": "guards",
+      "col": 4,
+      "type": "security",
+      "label": "Skip the step",
+      "sublabel": "nothing written, reported",
+      "width": 150
+    },
+    {
+      "id": "read",
+      "lane": "dougs",
+      "col": 0,
+      "type": "cloud",
+      "label": "Read operations",
+      "sublabel": "GET only",
+      "width": 150
+    },
+    {
+      "id": "write",
+      "lane": "dougs",
+      "col": 4,
+      "type": "cloud",
+      "label": "Write the change",
+      "sublabel": "reopen, edit, re-validate",
+      "width": 150
+    }
+  ],
+  "edges": [
+    {
+      "id": "fetch",
+      "from": "run",
+      "to": "read",
+      "label": "read",
+      "variant": "dashed"
+    },
+    {
+      "id": "propose",
+      "from": "run",
+      "to": "plan",
+      "label": "propose",
+      "variant": "emphasis"
+    },
+    {
+      "id": "inspect",
+      "from": "plan",
+      "to": "review"
+    },
+    {
+      "id": "approve",
+      "from": "review",
+      "to": "apply",
+      "label": "apply",
+      "variant": "emphasis"
+    },
+    {
+      "id": "check",
+      "from": "apply",
+      "to": "guards"
+    },
+    {
+      "id": "pass",
+      "from": "guards",
+      "to": "write",
+      "label": "pass",
+      "variant": "emphasis"
+    },
+    {
+      "id": "blocked",
+      "from": "guards",
+      "to": "skip",
+      "label": "blocked",
+      "variant": "security",
+      "role": "error"
+    },
+    {
+      "id": "reread",
+      "from": "write",
+      "to": "verify",
+      "label": "re-read"
+    },
+    {
+      "id": "done",
+      "from": "verify",
+      "to": "report",
+      "variant": "emphasis"
+    },
+    {
+      "id": "skipped",
+      "from": "skip",
+      "to": "report",
+      "variant": "dashed",
+      "role": "branch"
+    }
+  ]
+}

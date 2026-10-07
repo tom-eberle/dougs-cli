@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "How dougs-cli fits together",
+    "subtitle": "Everything runs on your computer and talks to Dougs with your own session",
+    "output": "architecture.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "entries": {
+        "frontend": {
+          "label": "Browser"
+        },
+        "backend": {
+          "label": "dougs-cli code"
+        },
+        "database": {
+          "label": "Local files"
+        },
+        "cloud": {
+          "label": "Dougs"
+        },
+        "security": {
+          "label": "Safety"
+        },
+        "external": {
+          "label": "You"
+        }
+      }
+    }
+  },
+  "components": [
+    {
+      "id": "user",
+      "type": "external",
+      "label": "You or your AI agent",
+      "sublabel": "terminal, scripts, agents",
+      "icon": "person",
+      "pos": [40, 290],
+      "size": [180, 64]
+    },
+    {
+      "id": "inputs",
+      "type": "database",
+      "label": "Rules & receipts",
+      "sublabel": "dougs.rules.json, PDFs",
+      "pos": [40, 40],
+      "size": [180, 64]
+    },
+    {
+      "id": "workflows",
+      "type": "backend",
+      "label": "Workflows",
+      "sublabel": "todo, receipts, vat, rules",
+      "pos": [360, 200],
+      "size": [180, 64]
+    },
+    {
+      "id": "plan",
+      "type": "security",
+      "label": "Plan engine",
+      "sublabel": "guards, apply, verify",
+      "pos": [360, 380],
+      "size": [180, 64]
+    },
+    {
+      "id": "outputs",
+      "type": "database",
+      "label": "Plans & reports",
+      "sublabel": "*.plan.json, CSV, JSON",
+      "pos": [360, 540],
+      "size": [180, 64]
+    },
+    {
+      "id": "login",
+      "type": "security",
+      "label": "Browser-cookie login",
+      "sublabel": "reuses your session",
+      "pos": [620, 40],
+      "size": [180, 64]
+    },
+    {
+      "id": "client",
+      "type": "backend",
+      "label": "API client",
+      "sublabel": "paging, retries, 4 at a time",
+      "pos": [620, 290],
+      "size": [180, 64]
+    },
+    {
+      "id": "cache",
+      "type": "database",
+      "label": "Cache",
+      "sublabel": "categories, PDF text",
+      "pos": [620, 540],
+      "size": [180, 64]
+    },
+    {
+      "id": "browser",
+      "type": "frontend",
+      "label": "Your browser",
+      "sublabel": "logged in to Dougs",
+      "pos": [880, 40],
+      "size": [180, 64]
+    },
+    {
+      "id": "dougs",
+      "type": "cloud",
+      "label": "Dougs private API",
+      "sublabel": "app.dougs.fr",
+      "pos": [880, 290],
+      "size": [180, 64]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "dougs CLI",
+      "wraps": ["workflows", "plan", "client", "login"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "run",
+      "from": "user",
+      "to": "workflows",
+      "label": "run",
+      "variant": "emphasis"
+    },
+    {
+      "id": "review",
+      "from": "user",
+      "to": "plan",
+      "label": "review, apply"
+    },
+    {
+      "id": "read-inputs",
+      "from": "inputs",
+      "to": "workflows",
+      "label": "read",
+      "variant": "dashed"
+    },
+    {
+      "id": "propose",
+      "from": "workflows",
+      "to": "plan",
+      "label": "propose a plan"
+    },
+    {
+      "id": "save",
+      "from": "plan",
+      "to": "outputs",
+      "label": "save",
+      "variant": "dashed"
+    },
+    {
+      "id": "reads",
+      "from": "workflows",
+      "to": "client",
+      "label": "read"
+    },
+    {
+      "id": "writes",
+      "from": "plan",
+      "to": "client",
+      "label": "write"
+    },
+    {
+      "id": "cookie",
+      "from": "browser",
+      "to": "login",
+      "label": "session cookie",
+      "variant": "security"
+    },
+    {
+      "id": "session",
+      "from": "login",
+      "to": "client",
+      "label": "session",
+      "variant": "security"
+    },
+    {
+      "id": "https",
+      "from": "client",
+      "to": "dougs",
+      "label": "HTTPS",
+      "variant": "emphasis"
+    },
+    {
+      "id": "cached",
+      "from": "client",
+      "to": "cache",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Reads are free",
+      "items": ["Workflows only read from Dougs", "Nothing changes until you apply a plan"]
+    },
+    {
+      "dot": "rose",
+      "title": "Writes are guarded",
+      "items": [
+        "Every change is a step in a plan you can review",
+        "Each write is checked again right after"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "Your files",
+      "items": [
+        "Rules, receipts, plans and reports are plain files",
+        "The cache never holds your session"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,184 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "One step of dougs apply",
+    "subtitle": "Changing an operation Dougs has already validated",
+    "output": "write-sequence.html",
+    "column_fit": "spread",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "viewBox": [1040, 650]
+  },
+  "participants": [
+    {
+      "id": "you",
+      "type": "external",
+      "label": "You",
+      "sublabel": "or your agent"
+    },
+    {
+      "id": "apply",
+      "type": "backend",
+      "label": "dougs apply",
+      "sublabel": "one plan step"
+    },
+    {
+      "id": "guards",
+      "type": "security",
+      "label": "Guard-rails",
+      "sublabel": "before any write"
+    },
+    {
+      "id": "dougs",
+      "type": "cloud",
+      "label": "Dougs",
+      "sublabel": "private API"
+    }
+  ],
+  "segments": [
+    {
+      "from": 160,
+      "to": 316,
+      "label": "Check"
+    },
+    {
+      "from": 322,
+      "to": 446,
+      "label": "Write"
+    },
+    {
+      "from": 452,
+      "to": 548,
+      "label": "Verify"
+    }
+  ],
+  "messages": [
+    {
+      "id": "start",
+      "from": "you",
+      "to": "apply",
+      "y": 182,
+      "label": "apply plan.json",
+      "variant": "emphasis"
+    },
+    {
+      "id": "read",
+      "from": "apply",
+      "to": "dougs",
+      "y": 212,
+      "label": "read the operation"
+    },
+    {
+      "id": "current",
+      "from": "dougs",
+      "to": "apply",
+      "y": 242,
+      "label": "current values",
+      "variant": "return"
+    },
+    {
+      "id": "check",
+      "from": "apply",
+      "to": "guards",
+      "y": 272,
+      "label": "locked? filed period? changed?",
+      "variant": "security"
+    },
+    {
+      "id": "ok",
+      "from": "guards",
+      "to": "apply",
+      "y": 302,
+      "label": "safe to write",
+      "variant": "return"
+    },
+    {
+      "id": "reopen",
+      "from": "apply",
+      "to": "dougs",
+      "y": 342,
+      "label": "reopen (validated: false)",
+      "variant": "default"
+    },
+    {
+      "id": "save",
+      "from": "apply",
+      "to": "dougs",
+      "y": 372,
+      "label": "save the change",
+      "variant": "emphasis"
+    },
+    {
+      "id": "reason",
+      "from": "apply",
+      "to": "dougs",
+      "y": 402,
+      "label": "VAT exemption reason (2nd pass)",
+      "variant": "default"
+    },
+    {
+      "id": "validate",
+      "from": "apply",
+      "to": "dougs",
+      "y": 432,
+      "label": "validate again",
+      "variant": "emphasis"
+    },
+    {
+      "id": "reread",
+      "from": "apply",
+      "to": "dougs",
+      "y": 472,
+      "label": "read it back"
+    },
+    {
+      "id": "final",
+      "from": "dougs",
+      "to": "apply",
+      "y": 502,
+      "label": "final values",
+      "variant": "return"
+    },
+    {
+      "id": "report",
+      "from": "apply",
+      "to": "you",
+      "y": 532,
+      "label": "applied, side effects, exit code",
+      "variant": "return"
+    }
+  ],
+  "activations": [
+    {
+      "participant": "apply",
+      "from": 182,
+      "to": 536,
+      "type": "backend"
+    },
+    {
+      "participant": "guards",
+      "from": 267,
+      "to": 307,
+      "type": "security"
+    },
+    {
+      "participant": "dougs",
+      "from": 207,
+      "to": 247,
+      "type": "cloud"
+    },
+    {
+      "participant": "dougs",
+      "from": 337,
+      "to": 437,
+      "type": "cloud"
+    },
+    {
+      "participant": "dougs",
+      "from": 467,
+      "to": 507,
+      "type": "cloud"
+    }
+  ]
+}

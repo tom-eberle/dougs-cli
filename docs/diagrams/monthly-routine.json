@@ -1,0 +1,172 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "The monthly routine",
+    "subtitle": "From a month of bank lines to a VAT return ready to file",
+    "output": "monthly-routine.html",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "legend": {
+      "entries": {
+        "backend": {
+          "label": "Read-only"
+        },
+        "messagebus": {
+          "label": "Writes a plan"
+        },
+        "security": {
+          "label": "Changes Dougs"
+        },
+        "external": {
+          "label": "You, in Dougs"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "books",
+      "label": "Fix the books"
+    },
+    {
+      "id": "declare",
+      "label": "Declare VAT"
+    }
+  ],
+  "phases": [
+    {
+      "id": "worklist",
+      "label": "Find",
+      "fromCol": 0,
+      "toCol": 0
+    },
+    {
+      "id": "fixes",
+      "label": "Propose plans",
+      "fromCol": 1,
+      "toCol": 3
+    },
+    {
+      "id": "close",
+      "label": "Apply and file",
+      "fromCol": 4,
+      "toCol": 5,
+      "variant": "emphasis"
+    }
+  ],
+  "mainPath": ["todo", "receipts", "vat", "rules", "apply", "summary", "file"],
+  "nodes": [
+    {
+      "id": "todo",
+      "lane": "books",
+      "col": 0,
+      "type": "backend",
+      "label": "dougs todo",
+      "sublabel": "what needs attention",
+      "width": 140
+    },
+    {
+      "id": "receipts",
+      "lane": "books",
+      "col": 1,
+      "type": "messagebus",
+      "label": "receipts match",
+      "sublabel": "pair PDFs with bank lines",
+      "width": 140
+    },
+    {
+      "id": "vat",
+      "lane": "books",
+      "col": 2,
+      "type": "messagebus",
+      "label": "vat check",
+      "sublabel": "rates and exemptions",
+      "width": 140
+    },
+    {
+      "id": "rules",
+      "lane": "books",
+      "col": 3,
+      "type": "messagebus",
+      "label": "rules apply",
+      "sublabel": "your recurring vendors",
+      "width": 140
+    },
+    {
+      "id": "apply",
+      "lane": "books",
+      "col": 4,
+      "type": "security",
+      "label": "dougs apply",
+      "sublabel": "review, then write",
+      "width": 140
+    },
+    {
+      "id": "summary",
+      "lane": "books",
+      "col": 5,
+      "type": "backend",
+      "label": "vat summary",
+      "sublabel": "CA3 boxes vs Dougs",
+      "width": 140
+    },
+    {
+      "id": "file",
+      "lane": "declare",
+      "col": 5,
+      "type": "external",
+      "label": "File the CA3",
+      "sublabel": "in the Dougs web app",
+      "width": 140
+    }
+  ],
+  "edges": [
+    {
+      "id": "start",
+      "from": "todo",
+      "to": "receipts"
+    },
+    {
+      "id": "next-vat",
+      "from": "receipts",
+      "to": "vat"
+    },
+    {
+      "id": "next-rules",
+      "from": "vat",
+      "to": "rules"
+    },
+    {
+      "id": "plans",
+      "from": "rules",
+      "to": "apply",
+      "label": "plans",
+      "variant": "emphasis"
+    },
+    {
+      "id": "check",
+      "from": "apply",
+      "to": "summary",
+      "variant": "emphasis"
+    },
+    {
+      "id": "declare",
+      "from": "summary",
+      "to": "file",
+      "label": "figures match",
+      "variant": "emphasis"
+    },
+    {
+      "id": "again",
+      "from": "apply",
+      "to": "todo",
+      "label": "until todo is empty",
+      "variant": "dashed",
+      "role": "return",
+      "route": "up-channel",
+      "fromSide": "top",
+      "toSide": "top"
+    }
+  ]
+}

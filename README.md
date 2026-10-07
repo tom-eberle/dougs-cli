@@ -27,6 +27,13 @@ VAT to check (1)
 5 items need attention: 3 missing receipts · 1 uncategorized · 1 VAT to check
 ```
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/architecture-dark.png">
+  <img alt="dougs-cli runs on your computer: workflows read from Dougs, the plan engine writes through the same API client, using the session from your browser" src="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/architecture-light.png">
+</picture>
+
+*Everything runs locally: workflows only read, every write goes through the plan engine, and your session comes from your own browser.*
+
 ## Install
 
 Requires **Node.js 22.13 or newer**.
@@ -60,6 +67,13 @@ browser's dev tools and pipe it in: `pbpaste | dougs login --with-token`.
 
 ## Workflows
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/monthly-routine-dark.png">
+  <img alt="The monthly routine: dougs todo, receipts match, vat check, rules apply, dougs apply, vat summary, then file the VAT return in Dougs" src="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/monthly-routine-light.png">
+</picture>
+
+*A typical month: find what is missing, propose fixes as plans, apply them, then check the VAT figures before filing in Dougs.*
+
 Every workflow that changes data works the same way: **propose → review → apply**.
 
 ```sh
@@ -68,6 +82,13 @@ less fixes.plan.json                         # each step says what changes and w
 dougs apply fixes.plan.json --dry-run        # re-reads each operation, shows before → after
 dougs apply fixes.plan.json                  # asks once, writes, verifies every change
 ```
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/safety-loop-dark.png">
+  <img alt="A workflow proposes a plan file; you review it; dougs apply checks guard-rails before writing each step to Dougs, then re-reads and verifies it" src="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/safety-loop-light.png">
+</picture>
+
+*Nothing changes until you apply a reviewed plan, and each step is checked before and verified after it is written.*
 
 `apply` is idempotent: steps already done are skipped, so re-running a half-applied plan file is safe.
 If an operation changed since the plan was made, its step is a `conflict` (exit 7) unless you pass
@@ -90,6 +111,13 @@ Guard-rails on every change:
 - **Fixes need strong evidence**: plans only include VAT fixes backed by Dougs' reverse-charge
   code, an explicit reverse-charge invoice, or a vendor in your rules file; add
   `--include-warnings` for the rest after reviewing them.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/write-sequence-dark.png">
+  <img alt="Sequence of one apply step on a validated operation: read, check guard-rails, reopen, save, set the VAT exemption reason, validate again, read back" src="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/write-sequence-light.png">
+</picture>
+
+*One step on an operation Dougs already validated: reopen, edit, validate again, then read it back to catch side effects.*
 
 Plans are data, so they are treated as untrusted: an `attach` step can only upload receipt files
 (`.pdf .png .jpg .jpeg .heic .webp`) from the plan's directory or the current directory, and the
@@ -294,6 +322,9 @@ See [AGENTS.md](AGENTS.md) for the layout and conventions, [docs/API.md](docs/AP
 is known about the Dougs API, and [docs/DECISIONS.md](docs/DECISIONS.md) for design choices.
 Test fixtures are synthetic: never commit real API responses, company ids, VAT numbers, IBANs,
 names or cookies.
+
+The diagrams in this README are made with [archify](https://github.com/tt-a1i/archify); their
+sources and how to regenerate them are in [docs/diagrams](docs/diagrams/README.md).
 
 ## License
 
