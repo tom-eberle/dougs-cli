@@ -32,7 +32,7 @@ VAT to check (1)
   <img alt="dougs-cli runs on your computer: workflows read from Dougs, the plan engine writes through the same API client, using the session you logged in with" src="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/architecture-light.png">
 </picture>
 
-*Everything runs locally: workflows only read, every write goes through the plan engine, and your session stays in your OS keychain.*
+*Everything runs locally: workflows only read, every write goes through the plan engine, and your session is kept in your OS credential store when there is one.*
 
 ## Install
 
@@ -75,12 +75,16 @@ Your password goes only to Dougs and is never stored; only the session that come
 in the **macOS Keychain**, or the **Secret Service** on Linux (through libsecret's `secret-tool`).
 Without one (Windows, containers, or `DOUGS_CREDENTIAL_STORE=file`) it goes in the config file
 with mode 0600, and `dougs login` says so. Sessions saved by earlier builds move to the OS store
-on first use.
+on first use. The store keeps the session out of plain files and backups; like the 0600 file, it
+is readable by programs running as you. Where the store is locked (e.g. the macOS login keychain
+over SSH or in cron), commands stop with `CREDENTIAL_STORE_LOCKED` (exit 3) and say how to unlock
+it, or use `DOUGS_SESSION`, or `DOUGS_CREDENTIAL_STORE=file dougs login` on such machines.
 
 `dougs whoami` shows when the session expires, `dougs doctor` warns a week before and fails once
-it has, and `dougs login --check` exits 0 (valid) or 3 (missing or expired) without printing
-anything, for scripts and agents to call before long runs. `dougs logout` forgets the session;
-`dougs logout --remote` also ends it on Dougs.
+it has, and `dougs login --check` exits 0 (valid) or 3 (missing, expired or locked) without printing
+anything, for scripts and agents to call before long runs. `dougs logout` forgets the session
+(if the store is locked it says the session is still there and exits 1); `dougs logout --remote`
+also ends it on Dougs.
 
 ## Workflows
 

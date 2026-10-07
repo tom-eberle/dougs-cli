@@ -80,10 +80,19 @@ export async function writeConfig(config: Config, env: Env = process.env): Promi
   await rename(temp, path);
 }
 
+/** Profile names become credential-store attributes and file keys: keep them plain. */
+const PROFILE_NAME = /^[A-Za-z0-9._-]{1,64}$/;
+
 export function activeProfileName(
   config: Config,
   explicit: string | undefined,
   env: Env = process.env,
 ): string {
-  return explicit || env.DOUGS_PROFILE || config.activeProfile || 'default';
+  const name = explicit || env.DOUGS_PROFILE || config.activeProfile || 'default';
+  if (!PROFILE_NAME.test(name))
+    throw new DougsError('USAGE', `Invalid profile name "${name}"`, {
+      exitCode: ExitCode.usage,
+      hint: 'use letters, digits, ".", "_" or "-" (at most 64)',
+    });
+  return name;
 }

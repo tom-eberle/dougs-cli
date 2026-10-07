@@ -54,6 +54,7 @@ export class FakeDougs {
     maxAgeSeconds: 30 * 86_400,
   };
   emailCodesSent = 0;
+  anonymousCookies = 0;
   remoteLogouts = 0;
   private readonly pendingSession = 'synthetic-pending-mfa';
 
@@ -89,15 +90,32 @@ export class FakeDougs {
       if (res) return res;
     }
     if (req.method === 'POST' && req.path.startsWith('/auth/api/')) return this.auth(req);
-    if (headers.get('cookie') !== `auth_session=${this.session}`)
-      return Response.json({ message: 'Unauthorized', statusCode: 401 }, { status: 401 });
+    if (headers.get('cookie') !== `auth_session=${this.session}`) return this.unauthorized();
     return this.route(req);
   };
+
+  /**
+   * OBSERVED: an unknown, expired or missing session gets a 401 that also sets a brand-new
+   * anonymous auth_session cookie with a future expiry.
+   */
+  unauthorized(message = 'Unauthorized'): Response {
+    this.anonymousCookies++;
+    const expires = new Date(Date.now() + 14 * 86_400_000).toUTCString();
+    return Response.json(
+      { message, statusCode: 401 },
+      {
+        status: 401,
+        headers: {
+          'set-cookie': `auth_session=synthetic-anonymous-${this.anonymousCookies}; Path=/; Expires=${expires}; HttpOnly`,
+        },
+      },
+    );
+  }
 
   private auth(req: RecordedRequest): Response {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const pending = req.headers.get('cookie') === `auth_session=${this.pendingSession}`;
-    const unauthorized = () => Response.json({ message: 'Unauthorized' }, { status: 401 });
+    const unauthorized = () => this.unauthorized();
     const withCookie = (data: unknown, value: string, maxAge: number) =>
       Response.json(data, {
         headers: {
@@ -106,7 +124,7 @@ export class FakeDougs {
       });
     if (req.path === '/auth/api/login') {
       if (body.email !== this.account.email || body.password !== this.account.password)
-        return Response.json({ message: 'Identifiants invalides' }, { status: 401 });
+        return this.unauthorized('Identifiants invalides');
       if (this.account.sso) return Response.json({ status: 'ssoRequired' });
       if (this.account.factors.length)
         return withCookie(

@@ -214,10 +214,17 @@ export class ApiClient {
     return fresh !== null && fresh !== sent;
   }
 
+  /**
+   * Adopt a renewed session cookie, only from a successful answer to our authenticated
+   * request. Dougs answers a 401 with a fresh *anonymous* auth_session cookie (observed):
+   * taking that would replace a good session and block the browser refresh.
+   */
   private takeSessionCookie(response: Response): void {
+    if (!response.ok) return;
     for (const header of response.headers.getSetCookie()) {
       const cookie = parseSetCookie(header);
       if (cookie?.name !== 'auth_session' || !cookie.value) continue;
+      if (cookie.expiresAt && Date.parse(cookie.expiresAt) <= Date.now()) continue;
       this.session = cookie.value;
       this.options.onSessionCookie?.(cookie.value, cookie.expiresAt);
     }

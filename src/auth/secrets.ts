@@ -10,10 +10,34 @@ export interface SecretStore {
   readonly id: 'keychain' | 'libsecret';
   /** Human name, e.g. "macOS Keychain". */
   readonly label: string;
+  /** null when there is no such item; throws StoreUnavailableError when it cannot be read. */
   get(account: string): Promise<string | null>;
   /** Returns false when the store could not keep the secret. */
   set(account: string, secret: string): Promise<boolean>;
   delete(account: string): Promise<void>;
+}
+
+/** The store exists but cannot be read right now (locked keychain, no Secret Service…). */
+export class StoreUnavailableError extends Error {
+  constructor(readonly store: string) {
+    super(`${store} could not be read`);
+    this.name = 'StoreUnavailableError';
+  }
+}
+
+/** Write, then read back: anything but the exact secret means it was not kept. */
+async function writeVerified(
+  store: SecretStore,
+  account: string,
+  secret: string,
+  write: () => Promise<ExecResult>,
+): Promise<boolean> {
+  if ((await write()).code !== 0) return false;
+  try {
+    return (await store.get(account)) === secret;
+  } catch {
+    return false;
+  }
 }
 
 export interface ExecResult {
@@ -48,6 +72,9 @@ export const exec: Exec = (command, args, input) =>
 /** Values we can pass through `security -i` quoting without escaping rules to get wrong. */
 const PLAIN = /^[\x21\x23-\x5b\x5d-\x7e]+$/;
 
+/** `security` exit status for errSecItemNotFound; anything else non-zero is a failure. */
+const ITEM_NOT_FOUND = 44;
+
 /** macOS Keychain through /usr/bin/security; the secret goes through stdin, never argv. */
 export function keychainStore(run: Exec = exec): SecretStore {
   return {
@@ -62,13 +89,14 @@ export function keychainStore(run: Exec = exec): SecretStore {
         account,
         '-w',
       ]);
-      return r.code === 0 ? r.stdout.replace(/\n$/, '') || null : null;
+      if (r.code === 0) return r.stdout.replace(/\n$/, '') || null;
+      if (r.code === ITEM_NOT_FOUND) return null;
+      throw new StoreUnavailableError(this.label);
     },
     async set(account, secret) {
       if (!PLAIN.test(account) || !PLAIN.test(secret)) return false;
       const command = `add-generic-password -U -s ${SERVICE} -l ${SERVICE} -a "${account}" -w "${secret}"\n`;
-      const r = await run('security', ['-i'], command);
-      return r.code === 0 && (await this.get(account)) === secret;
+      return writeVerified(this, account, secret, () => run('security', ['-i'], command));
     },
     async delete(account) {
       await run('security', ['delete-generic-password', '-s', SERVICE, '-a', account]);
@@ -84,12 +112,16 @@ export function libsecretStore(run: Exec = exec): SecretStore {
     label: 'Secret Service (libsecret)',
     async get(account) {
       const r = await run('secret-tool', ['lookup', ...attributes(account)]);
-      return r.code === 0 ? r.stdout.replace(/\n$/, '') || null : null;
+      if (r.code === 0) return r.stdout.replace(/\n$/, '') || null;
+      // secret-tool exits 1 both for "no such item" and for a store it cannot reach.
+      if (r.code === 1) return null;
+      throw new StoreUnavailableError(this.label);
     },
     async set(account, secret) {
       const label = `--label=${SERVICE} (${account})`;
-      const r = await run('secret-tool', ['store', label, ...attributes(account)], secret);
-      return r.code === 0 && (await this.get(account)) === secret;
+      return writeVerified(this, account, secret, () =>
+        run('secret-tool', ['store', label, ...attributes(account)], secret),
+      );
     },
     async delete(account) {
       await run('secret-tool', ['clear', ...attributes(account)]);

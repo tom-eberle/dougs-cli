@@ -70,6 +70,8 @@ async function passwordSession(ctx: Context, opts: LoginOptions): Promise<Obtain
       interactive ? undefined : `pipe it on stdin: dougs login --email ${email} < password.txt`,
     );
   ctx.out.addSecret(password);
+  if (ctx.env.DOUGS_API_BASE)
+    ctx.out.warn(`DOUGS_API_BASE is set: the password goes to ${ctx.env.DOUGS_API_BASE}`);
   const result = await passwordLogin({
     email,
     password,
@@ -105,27 +107,39 @@ async function obtainSession(ctx: Context, opts: LoginOptions): Promise<Obtained
   return passwordSession(ctx, opts);
 }
 
-/** `login --check`: exit 0 when the stored session works, 3 when it is missing or expired. */
+/**
+ * `login --check`: exit 0 when Dougs accepts the stored session, 3 when it is missing,
+ * expired or locked away in an unreadable credential store. Dougs' answer decides, not
+ * the recorded expiry.
+ */
 async function checkLogin(ctx: Context): Promise<void> {
   const config = await readConfig(ctx.env);
   const profile = activeProfileName(config, ctx.options.profile, ctx.env);
-  let reason: 'missing' | 'expired' | null = null;
+  let reason: 'missing' | 'locked' | 'expired' | null = null;
   try {
     await ctx.user();
   } catch (e) {
     const error = toDougsError(e);
     if (error.exitCode !== ExitCode.auth) throw e;
-    reason = error.code === 'AUTH_MISSING' ? 'missing' : 'expired';
+    reason =
+      error.code === 'AUTH_MISSING'
+        ? 'missing'
+        : error.code === 'CREDENTIAL_STORE_LOCKED'
+          ? 'locked'
+          : 'expired';
   }
-  const auth = reason === 'missing' ? null : await ctx.auth();
+  const auth = reason === null || reason === 'expired' ? await ctx.auth() : null;
   if (reason) ctx.exitCode = ExitCode.auth;
+  // A recorded expiry in the past is stale when Dougs still accepts the session.
+  const recorded = auth?.expiresAt ?? null;
+  const stale = !reason && (daysLeft(recorded) ?? 0) < 0;
   if (ctx.options.json)
     ctx.out.result({
       valid: !reason,
       reason,
       profile,
       authSource: auth?.source ?? null,
-      sessionExpiresAt: auth?.expiresAt ?? null,
+      sessionExpiresAt: stale ? null : recorded,
     });
 }
 
@@ -227,6 +241,10 @@ export function registerAuthCommands(program: Command): void {
           `No OS credential store in use: the session is saved in ${saved.location} (mode 0600)`,
         ),
       );
+    if (saved.staleSecret)
+      ctx.out.warn(
+        `the previous session of profile "${profileName}" is still in the OS credential store and could not be removed; delete the "dougs-cli" item for "${profileName}" there (macOS: security delete-generic-password -s dougs-cli -a ${profileName})`,
+      );
 
     const result = {
       profile: profileName,
@@ -279,14 +297,33 @@ export function registerAuthCommands(program: Command): void {
     }
     const config = await readConfig(ctx.env);
     const profileName = activeProfileName(config, ctx.options.profile, ctx.env);
-    const loggedOut = await forgetSession(config, profileName, ctx.runtime.secrets, ctx.env);
+    const location = sessionLocation(config.profiles[profileName] ?? {}, ctx.env);
+    const { had, secretRemaining } = await forgetSession(
+      config,
+      profileName,
+      ctx.runtime.secrets,
+      ctx.env,
+    );
     ctx.out.result(
-      { profile: profileName, loggedOut, ...(remote === undefined ? {} : { remote }) },
+      {
+        profile: profileName,
+        loggedOut: had && !secretRemaining,
+        ...(secretRemaining ? { secretRemaining } : {}),
+        ...(remote === undefined ? {} : { remote }),
+      },
       (r) =>
         r.loggedOut
           ? `${style.green('✓')} Logged out of profile "${r.profile}"${r.remote ? ' (session ended on Dougs too)' : ''}`
-          : `Profile "${r.profile}" had no stored session`,
+          : secretRemaining
+            ? `Profile "${r.profile}" is still logged in`
+            : `Profile "${r.profile}" had no stored session`,
     );
+    if (secretRemaining) {
+      ctx.out.warn(
+        `the session is still in the ${location} and could not be removed: unlock it and run dougs logout again${remote ? '' : ', or end it on Dougs with: dougs logout --remote'}`,
+      );
+      ctx.exitCode = ExitCode.unexpected;
+    }
   });
 
   withExamples(

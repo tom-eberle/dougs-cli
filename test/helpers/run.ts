@@ -6,7 +6,7 @@ import { Cache } from '../../src/api/cache.js';
 import { ApiClient } from '../../src/api/client.js';
 import { Dougs } from '../../src/api/dougs.js';
 import type { BrowserSession } from '../../src/auth/browser-cookies.js';
-import type { SecretStore } from '../../src/auth/secrets.js';
+import { type SecretStore, StoreUnavailableError } from '../../src/auth/secrets.js';
 import type { Runtime } from '../../src/commands/context.js';
 import { run } from '../../src/program.js';
 import type { FakeDougs } from './fake-api.js';
@@ -112,21 +112,29 @@ export function dougsFor(api: FakeDougs): Dougs {
   return new Dougs(client, COMPANY, new Cache(tempHome(), false));
 }
 
-/** An in-memory OS credential store; `broken` makes every write fail. */
-export function memoryStore(broken = false): SecretStore & { items: Map<string, string> } {
+/**
+ * An in-memory OS credential store. `failWrites`: nothing can be saved (locked or missing
+ * store at write time). `locked`: reads throw and deletes do nothing, like a locked keychain.
+ */
+export function memoryStore(
+  options: { failWrites?: boolean; locked?: boolean } = {},
+): SecretStore & { items: Map<string, string> } {
   const items = new Map<string, string>();
   return {
     id: 'keychain',
     label: 'macOS Keychain',
     items,
-    get: async (account) => items.get(account) ?? null,
+    get: async (account) => {
+      if (options.locked) throw new StoreUnavailableError('macOS Keychain');
+      return items.get(account) ?? null;
+    },
     set: async (account, secret) => {
-      if (broken) return false;
+      if (options.failWrites || options.locked) return false;
       items.set(account, secret);
       return true;
     },
     delete: async (account) => {
-      items.delete(account);
+      if (!options.locked) items.delete(account);
     },
   };
 }

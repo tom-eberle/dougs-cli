@@ -15,7 +15,8 @@ description: Run French bookkeeping workflows on Dougs (app.dougs.fr) with the d
 2. **Never handle credentials.** Check with `dougs login --check` (exit 0 valid, 3 not) before
    long runs. On exit 3, ask the user to run `dougs login` in their own terminal (email,
    password and 2FA code), or `dougs login --from-browser chrome` for Google sign-in. Never ask
-   for, type or store their password or session cookie.
+   for, type or store their password or session cookie. `CREDENTIAL_STORE_LOCKED` means the
+   keychain is locked (SSH, cron): relay the hint; don't suggest logging in again first.
 3. **Branch on exit codes**: 0 ok · 2 usage or confirmation required · 3 auth · 4 not found ·
    5 rejected by Dougs · 6 network/API changed (run `dougs doctor --json`) · 7 plan partially
    failed, conflicts, or side effects (read the report).

@@ -225,7 +225,7 @@ describe('session storage', () => {
       home,
       loggedIn: false,
       stdin: api.session,
-      secrets: memoryStore(true),
+      secrets: memoryStore({ failWrites: true }),
     });
     expect(r.code).toBe(0);
     expect(r.stderr.trim().split('\n')).toHaveLength(1);

@@ -67,6 +67,8 @@ Dougs API, and exercised on a real company only in a limited way. Review plans, 
   0600 config file with a notice (`DOUGS_CREDENTIAL_STORE=file` forces it); the password is never
   stored. Their expiry is recorded (and kept current when Dougs renews the cookie): `whoami`
   shows it, `doctor` warns a week ahead and fails once expired, `login --check` exits 0 or 3.
+  A store that cannot be read (locked keychain over SSH) is `CREDENTIAL_STORE_LOCKED` (exit 3)
+  with an unlock hint; a logout that cannot remove the stored item says so and exits 1.
 - `logout` (`--remote` also ends the session on Dougs), `whoami`, profiles, `DOUGS_SESSION` /
   `DOUGS_COMPANY` / `DOUGS_PROFILE`.
 - `commands --json`, `schema <type>`, `doctor` (API drift detection).

@@ -187,10 +187,21 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
 - **OS stores through their CLIs, secrets through stdin.** `security -i` (Keychain) and
   `secret-tool store` read the secret on stdin so it never shows in `ps`. Every write is read
   back; a store that cannot keep it (locked keychain over SSH, no D-Bus) falls back to the 0600
-  config file with a one-line notice. Windows Credential Manager has no built-in CLI that can
+  config file with a one-line notice, and the previous store item is removed (or a warning says
+  it could not be). A store that cannot be *read* is `CREDENTIAL_STORE_LOCKED` (exit 3) with an
+  unlock hint, never "not logged in"; a logout that cannot remove the item reports
+  `secretRemaining` and exits 1. Items written by `/usr/bin/security` are readable by the same
+  user's processes without a prompt: this is protection equal to the 0600 file, plus keeping the
+  secret out of files and backups — not more. Profile names are limited to `[A-Za-z0-9._-]`
+  (≤ 64) since they become store attributes. Windows Credential Manager has no built-in CLI that can
   read a secret back, so Windows uses the file.
+- **Only authenticated successes renew the session.** Dougs answers every 401 with a fresh
+  *anonymous* `auth_session` cookie (observed). The client adopts a cookie only from a 2xx answer
+  to its authenticated request, and the login conversation only from 2xx steps; expired cookies
+  are ignored. The password login refuses a non-HTTPS `DOUGS_API_BASE` (localhost aside) and
+  warns whenever that variable is set.
 - **Expiry is advisory.** It is recorded from Set-Cookie or the browser cookie, and updated when
-  Dougs sends a new `auth_session` cookie on any response (which is also saved). `doctor` and
+  Dougs renews the cookie on a successful response (which is also saved). `doctor` and
   `login --check` judge; ordinary commands do not refuse to run on a past expiry, since Dougs
   answering is what counts.
 

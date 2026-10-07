@@ -54,6 +54,7 @@ const MAX_CODE_ATTEMPTS = 3;
 export async function passwordLogin(options: LoginOptions): Promise<LoginResult> {
   const jar = new CookieJar();
   const base = (options.baseUrl ?? DEFAULT_API_BASE).replace(/\/+$/, '');
+  assertSafeBase(base);
   const post = async (path: string, body: unknown) => {
     let response: Response;
     try {
@@ -182,6 +183,22 @@ export async function passwordLogin(options: LoginOptions): Promise<LoginResult>
   return { session: cookie.value, expiresAt: cookie.expiresAt, factor };
 }
 
+/** The password only ever travels over HTTPS (plain HTTP is allowed to localhost, for tests). */
+export function assertSafeBase(base: string): void {
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    throw new DougsError('USAGE', `Invalid API base URL: ${base}`, { exitCode: ExitCode.usage });
+  }
+  const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local))
+    throw new DougsError('INSECURE_API_BASE', `Refusing to send your password to ${url.origin}`, {
+      exitCode: ExitCode.usage,
+      hint: 'DOUGS_API_BASE must use https (it is meant for tests; unset it for app.dougs.fr)',
+    });
+}
+
 /** The factor the web app would pick: most recently used, else an authenticator app. */
 export function chooseFactor(factors: unknown, forced?: AuthFactor): AuthFactor {
   const known = (Array.isArray(factors) ? (factors as FactorInfo[]) : []).filter(
@@ -220,7 +237,9 @@ export function chooseFactor(factors: unknown, forced?: AuthFactor): AuthFactor 
 class CookieJar {
   private readonly cookies = new Map<string, Cookie>();
 
+  /** Only successful answers count: a refused step may set an anonymous cookie (observed on 401s). */
   take(response: Response): void {
+    if (!response.ok) return;
     for (const header of response.headers.getSetCookie()) {
       const cookie = parseSetCookie(header);
       if (!cookie) continue;
