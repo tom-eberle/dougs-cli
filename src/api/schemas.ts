@@ -363,6 +363,9 @@ export const whoamiSchema = z.object({
   companies: z.array(companySchema),
   activeCompany: z.string().nullable(),
   profile: z.string(),
-  authSource: z.enum(['env', 'token', 'chrome', 'brave', 'edge', 'arc']),
+  authSource: z.enum(['env', 'password', 'token', 'chrome', 'brave', 'edge', 'arc']),
+  /** Where the session is kept: an OS credential store, the config file, or DOUGS_SESSION. */
+  sessionStorage: z.string(),
+  sessionExpiresAt: z.string().nullable(),
 });
 export type Whoami = z.infer<typeof whoamiSchema>;

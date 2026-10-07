@@ -1,5 +1,6 @@
 import { DougsError, ExitCode, LOGIN_HINT, notFound, redact } from '../output/errors.js';
 import { Limiter } from '../util/concurrency.js';
+import { parseSetCookie } from '../util/cookies.js';
 import { DEFAULT_API_BASE, USER_AGENT } from '../version.js';
 
 export type Fetch = typeof fetch;
@@ -11,6 +12,8 @@ export interface ClientOptions {
   fetch?: Fetch;
   /** Called once on 401/403 to obtain a fresh session (e.g. re-read the browser cookie). */
   refreshSession?: () => Promise<string | null>;
+  /** Called when Dougs sends a new auth_session cookie (rotated value or new expiry). */
+  onSessionCookie?: (session: string, expiresAt: string | null) => void;
   log?: (line: string) => void;
   sleep?: (ms: number) => Promise<void>;
   maxRetries?: number;
@@ -101,6 +104,7 @@ export class ApiClient {
           });
         }
         this.log(`${method} ${pathOnly(path)} → ${response.status} (${Date.now() - started} ms)`);
+        this.takeSessionCookie(response);
 
         if (
           // 401 means the session is gone. A 403 is only a session problem on reads: on a
@@ -210,6 +214,15 @@ export class ApiClient {
     return fresh !== null && fresh !== sent;
   }
 
+  private takeSessionCookie(response: Response): void {
+    for (const header of response.headers.getSetCookie()) {
+      const cookie = parseSetCookie(header);
+      if (cookie?.name !== 'auth_session' || !cookie.value) continue;
+      this.session = cookie.value;
+      this.options.onSessionCookie?.(cookie.value, cookie.expiresAt);
+    }
+  }
+
   private async toError(method: HttpMethod, path: string, response: Response): Promise<DougsError> {
     const messageCode = response.headers.get('x-message-code');
     const apiMessage = await readApiMessage(response);
@@ -232,7 +245,7 @@ export class ApiClient {
       return method === 'GET'
         ? new DougsError('FORBIDDEN', `Dougs refused access to ${where}${detail}`, {
             exitCode: ExitCode.rejected,
-            hint: 'check --company, or log in again: dougs login --from-browser chrome',
+            hint: 'check --company, or log in again: dougs login',
             status,
           })
         : new DougsError('FORBIDDEN', `Dougs refused the change: ${where}${detail}`, {

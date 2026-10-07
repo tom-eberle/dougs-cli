@@ -63,7 +63,7 @@ describe('ApiClient', () => {
     ).rejects.toMatchObject({
       code: 'AUTH_EXPIRED',
       exitCode: 3,
-      hint: 'run: dougs login --from-browser chrome',
+      hint: 'run: dougs login (or: dougs login --from-browser chrome)',
     });
     await expect(
       client(sequence(() => new Response('', { status: 404 })).fetch).get('/x'),

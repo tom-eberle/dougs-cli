@@ -20,8 +20,10 @@ Read [`skills/dougs/SKILL.md`](skills/dougs/SKILL.md) first; it has the recipes.
   that is the safety net, not an error to work around silently.
 - Run `dougs apply plan.json --dry-run` before applying; keep the `--report` output as an audit
   log.
-- On exit code 3, ask the human to run `dougs login --from-browser chrome` (or provide
-  `DOUGS_SESSION`). Never ask for, print or store the cookie yourself.
+- Before a long run, call `dougs login --check` (exit 0 valid, 3 missing or expired; silent
+  unless `--json`). On exit code 3, ask the human to run `dougs login` in their own terminal
+  (or `--from-browser chrome`, or to provide `DOUGS_SESSION`). Never ask for, type, print or
+  store their password or session cookie yourself.
 - On exit code 6 with `API_SHAPE`, run `dougs doctor --json` and report it: Dougs may have changed
   its private API.
 - Accounting judgement stays with humans: `vat check` and `close-check` findings are signals,

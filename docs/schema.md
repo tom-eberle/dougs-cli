@@ -197,7 +197,7 @@ did not ask for.
 In JSON mode a failure prints one line on **stderr**:
 
 ```json
-{"error":{"code":"AUTH_EXPIRED","message":"Dougs session is missing or expired","hint":"run: dougs login --from-browser chrome","status":401}}
+{"error":{"code":"AUTH_EXPIRED","message":"Dougs session is missing or expired","hint":"run: dougs login (or: dougs login --from-browser chrome)","status":401}}
 ```
 
 | Exit | Meaning | Typical codes |

@@ -12,8 +12,10 @@ description: Run French bookkeeping workflows on Dougs (app.dougs.fr) with the d
 
 1. **Read freely, write only through reviewed plans.** Produce a plan file, summarise it for the
    user, wait for approval, then `dougs apply <plan> --yes --report <plan>.report.json`.
-2. **Never handle the session cookie.** If a command exits 3, ask the user to run
-   `dougs login --from-browser chrome` (or brave/edge/arc).
+2. **Never handle credentials.** Check with `dougs login --check` (exit 0 valid, 3 not) before
+   long runs. On exit 3, ask the user to run `dougs login` in their own terminal (email,
+   password and 2FA code), or `dougs login --from-browser chrome` for Google sign-in. Never ask
+   for, type or store their password or session cookie.
 3. **Branch on exit codes**: 0 ok · 2 usage or confirmation required · 3 auth · 4 not found ·
    5 rejected by Dougs · 6 network/API changed (run `dougs doctor --json`) · 7 plan partially
    failed, conflicts, or side effects (read the report).
@@ -23,6 +25,7 @@ description: Run French bookkeeping workflows on Dougs (app.dougs.fr) with the d
 ## Orientation
 
 ```sh
+dougs login --check --json             # is the session valid? when does it expire?
 dougs whoami --json                    # user, companies, active company, auth source
 dougs doctor --json                    # auth + API shape check
 dougs commands --json                  # every command, flag and example

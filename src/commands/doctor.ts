@@ -1,7 +1,7 @@
 import type { Command } from 'commander';
 import { z } from 'zod';
 import { rawBreakdownSchema, rawOperationSchema } from '../api/schemas.js';
-import { configPath } from '../auth/config.js';
+import { daysLeft, sessionLocation } from '../auth/credentials.js';
 import { DougsError, ExitCode, toDougsError } from '../output/errors.js';
 import { style } from '../output/style.js';
 import { VERSION } from '../version.js';
@@ -47,8 +47,13 @@ const REQUIRED_BREAKDOWN_FIELDS = requiredKeys(rawBreakdownSchema.shape);
 interface Check {
   name: string;
   ok: boolean;
+  /** Passed, but needs attention soon. */
+  warning?: boolean;
   detail: string;
 }
+
+/** Warn this many days before a known session expiry. */
+const EXPIRY_WARNING_DAYS = 7;
 
 export function schemaDrift(samples: unknown[]) {
   const issues: { sample: number; path: string; message: string }[] = [];
@@ -96,10 +101,15 @@ export function registerDoctorCommand(program: Command): void {
     ];
     let drift: ReturnType<typeof schemaDrift> | null = null;
     let failure: DougsError | null = null;
-    const step = async (name: string, fn: () => Promise<string>) => {
+    const step = async (name: string, fn: () => Promise<string | { warning: string }>) => {
       if (failure) return checks.push({ name, ok: false, detail: 'skipped' });
       try {
-        checks.push({ name, ok: true, detail: await fn() });
+        const detail = await fn();
+        checks.push(
+          typeof detail === 'string'
+            ? { name, ok: true, detail }
+            : { name, ok: true, warning: true, detail: detail.warning },
+        );
       } catch (e) {
         failure = toDougsError(e);
         checks.push({
@@ -111,7 +121,25 @@ export function registerDoctorCommand(program: Command): void {
     };
     await step('credentials', async () => {
       const auth = await ctx.auth();
-      return `profile "${auth.profileName}" from ${auth.source === 'env' ? 'DOUGS_SESSION' : `${auth.source} (${configPath(ctx.env)})`}`;
+      return `profile "${auth.profileName}" from ${auth.source === 'env' ? 'DOUGS_SESSION' : `${auth.source} (${sessionLocation(auth.profile, ctx.env)})`}`;
+    });
+    await step('expiry', async () => {
+      const { expiresAt, source } = await ctx.auth();
+      const days = daysLeft(expiresAt);
+      if (days === null || !expiresAt)
+        return source === 'env' || source === 'token'
+          ? 'unknown for a pasted session'
+          : 'unknown; recorded at the next dougs login';
+      const date = expiresAt.slice(0, 10);
+      if (days < 0)
+        throw new DougsError('AUTH_EXPIRED', `the session expired on ${date}`, {
+          exitCode: ExitCode.auth,
+          hint: 'run: dougs login',
+        });
+      const left = `${Math.floor(days)} day${Math.floor(days) === 1 ? '' : 's'}`;
+      return days < EXPIRY_WARNING_DAYS
+        ? { warning: `the session expires on ${date}, in ${left}: run dougs login soon` }
+        : `session valid until ${date} (${left})`;
     });
     await step('session', async () => {
       const { user, companies } = await ctx.user();
@@ -151,7 +179,7 @@ export function registerDoctorCommand(program: Command): void {
     ctx.out.result(result, (r) => {
       const lines = r.checks.map(
         (c) =>
-          `${c.ok ? style.green('✓') : style.red('✗')} ${c.name.padEnd(11)} ${c.ok ? c.detail : style.red(c.detail)}`,
+          `${!c.ok ? style.red('✗') : c.warning ? style.yellow('!') : style.green('✓')} ${c.name.padEnd(11)} ${!c.ok ? style.red(c.detail) : c.warning ? style.yellow(c.detail) : c.detail}`,
       );
       const d = r.schema as ReturnType<typeof schemaDrift> | null;
       if (d?.unknownFields.length)

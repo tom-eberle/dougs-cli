@@ -6,6 +6,7 @@ import { Cache } from '../../src/api/cache.js';
 import { ApiClient } from '../../src/api/client.js';
 import { Dougs } from '../../src/api/dougs.js';
 import type { BrowserSession } from '../../src/auth/browser-cookies.js';
+import type { SecretStore } from '../../src/auth/secrets.js';
 import type { Runtime } from '../../src/commands/context.js';
 import { run } from '../../src/program.js';
 import type { FakeDougs } from './fake-api.js';
@@ -24,8 +25,12 @@ export interface RunOptions {
   stdinIsTTY?: boolean;
   stdin?: string;
   answer?: string;
-  /** Receives every confirmation question asked on the TTY. */
+  /** Answers to successive prompts (ask and askSecret), before falling back to `answer`. */
+  answers?: string[];
+  /** Receives every question asked on the TTY (secret ones are prefixed with "secret:"). */
   questions?: string[];
+  /** OS credential store; default none (sessions go to the config file). */
+  secrets?: SecretStore | null;
   env?: Record<string, string>;
   /** Log in first by writing a config file with the fake session. */
   loggedIn?: boolean;
@@ -74,8 +79,13 @@ export async function runCli(
     readStdin: async () => options.stdin ?? '',
     ask: async (question) => {
       options.questions?.push(question);
-      return options.answer ?? 'n';
+      return options.answers?.shift() ?? options.answer ?? 'n';
     },
+    askSecret: async (question) => {
+      options.questions?.push(`secret:${question}`);
+      return options.answers?.shift() ?? '';
+    },
+    secrets: options.secrets ?? null,
     readBrowserSession: async (browser) => {
       if (!options.browserSession) throw new Error(`no ${browser} session in test`);
       return options.browserSession;
@@ -100,4 +110,23 @@ export function dougsFor(api: FakeDougs): Dougs {
     sleep: async () => {},
   });
   return new Dougs(client, COMPANY, new Cache(tempHome(), false));
+}
+
+/** An in-memory OS credential store; `broken` makes every write fail. */
+export function memoryStore(broken = false): SecretStore & { items: Map<string, string> } {
+  const items = new Map<string, string>();
+  return {
+    id: 'keychain',
+    label: 'macOS Keychain',
+    items,
+    get: async (account) => items.get(account) ?? null,
+    set: async (account, secret) => {
+      if (broken) return false;
+      items.set(account, secret);
+      return true;
+    },
+    delete: async (account) => {
+      items.delete(account);
+    },
+  };
 }

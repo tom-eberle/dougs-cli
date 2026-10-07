@@ -174,6 +174,26 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
   marker that is turned into ESC only after sanitizing, so data cannot forge them. JSON output is
   never altered.
 
+## Login and credentials
+
+- **Password login copies the web app.** The flow (`/auth/api/login`, then `/auth/api/mfa/*`
+  when asked) and the factor choice (most recently used, else the authenticator app) come from
+  the web app's sign-in code; there is no captcha or device check. It has not been run against
+  the real API by the test suite: the first real login is the user's. `ssoRequired` (Google
+  sign-in) is not attempted outside a browser; it points to `--from-browser`.
+- **Never prompt without a terminal.** Plain `dougs login` with no TTY exits 2 with the
+  non-interactive options; `--email` reads the password from stdin; a second factor without a
+  terminal is `MFA_NEEDS_TERMINAL` (exit 2), not a hang.
+- **OS stores through their CLIs, secrets through stdin.** `security -i` (Keychain) and
+  `secret-tool store` read the secret on stdin so it never shows in `ps`. Every write is read
+  back; a store that cannot keep it (locked keychain over SSH, no D-Bus) falls back to the 0600
+  config file with a one-line notice. Windows Credential Manager has no built-in CLI that can
+  read a secret back, so Windows uses the file.
+- **Expiry is advisory.** It is recorded from Set-Cookie or the browser cookie, and updated when
+  Dougs sends a new `auth_session` cookie on any response (which is also saved). `doctor` and
+  `login --check` judge; ordinary commands do not refuse to run on a past expiry, since Dougs
+  answering is what counts.
+
 ## Housekeeping
 
 - The User-Agent and package metadata point to the GitHub repository (created before publishing).

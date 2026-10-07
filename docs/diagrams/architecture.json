@@ -74,17 +74,17 @@
     {
       "id": "login",
       "type": "security",
-      "label": "Browser-cookie login",
-      "sublabel": "reuses your session",
-      "pos": [620, 40],
-      "size": [180, 64]
+      "label": "Login (password, browser or token)",
+      "sublabel": "session kept in your keychain",
+      "pos": [595, 40],
+      "size": [250, 64]
     },
     {
       "id": "client",
       "type": "backend",
       "label": "API client",
       "sublabel": "paging, retries, 4 at a time",
-      "pos": [620, 290],
+      "pos": [630, 290],
       "size": [180, 64]
     },
     {
@@ -92,7 +92,7 @@
       "type": "database",
       "label": "Cache",
       "sublabel": "categories, PDF text",
-      "pos": [620, 540],
+      "pos": [630, 540],
       "size": [180, 64]
     },
     {
@@ -100,7 +100,7 @@
       "type": "frontend",
       "label": "Your browser",
       "sublabel": "logged in to Dougs",
-      "pos": [880, 40],
+      "pos": [930, 40],
       "size": [180, 64]
     },
     {
@@ -108,7 +108,7 @@
       "type": "cloud",
       "label": "Dougs private API",
       "sublabel": "app.dougs.fr",
-      "pos": [880, 290],
+      "pos": [930, 290],
       "size": [180, 64]
     }
   ],

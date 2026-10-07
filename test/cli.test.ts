@@ -74,7 +74,7 @@ describe('errors and exit codes', () => {
     expect(r.error()).toEqual({
       code: 'AUTH_MISSING',
       message: 'Not logged in (profile "default")',
-      hint: 'run: dougs login --from-browser chrome',
+      hint: 'run: dougs login (or: dougs login --from-browser chrome)',
     });
   });
 

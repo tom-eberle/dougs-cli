@@ -8,12 +8,18 @@ export const BROWSERS = ['chrome', 'brave', 'edge', 'arc'] as const;
 export const browserSchema = z.enum(BROWSERS);
 export type Browser = z.infer<typeof browserSchema>;
 
-export const credentialSourceSchema = z.enum(['token', ...BROWSERS]);
+export const credentialSourceSchema = z.enum(['password', 'token', ...BROWSERS]);
 export type CredentialSource = z.infer<typeof credentialSourceSchema>;
 
 const profileSchema = z.object({
+  /** Only when no OS credential store is available (or sessions saved before 0.1.0). */
   session: z.string().optional(),
+  /** The OS store holding this profile's session, keyed by the profile name. */
+  sessionStore: z.enum(['keychain', 'libsecret']).optional(),
+  sessionExpiresAt: z.string().optional(),
   source: credentialSourceSchema.optional(),
+  /** Last email used with password login, offered as the default next time. */
+  email: z.string().optional(),
   companyId: z.string().optional(),
   savedAt: z.string().optional(),
 });
@@ -64,7 +70,7 @@ export async function readConfig(env: Env = process.env): Promise<Config> {
   return parsed.data;
 }
 
-/** Atomic write with 0600 permissions; the file holds a session cookie. */
+/** Atomic write with 0600 permissions; the file may hold a session cookie. */
 export async function writeConfig(config: Config, env: Env = process.env): Promise<void> {
   const path = configPath(env);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });

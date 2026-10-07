@@ -59,8 +59,16 @@ Dougs API, and exercised on a real company only in a limited way. Review plans, 
 ### Building blocks
 - `ops list|get|set|attach|detach|validate|download`, `receipts download`, `categories list`,
   `accounts list`, `export` (CSV/JSON/JSONL), `api` (authenticated escape hatch).
-- `login --from-browser chrome|brave|edge|arc` (macOS; Linux best effort) and `--with-token`,
-  `logout`, `whoami`, profiles, `DOUGS_SESSION` / `DOUGS_COMPANY` / `DOUGS_PROFILE`.
+- `login`: email and password with the second factor Dougs asks for (authenticator app or email
+  code), like the web app; `--email` with the password on stdin for scripts; `--from-browser
+  chrome|brave|edge|arc` (macOS; Linux best effort; the only way for Google sign-in) and
+  `--with-token`. Without a terminal, plain `login` exits 2 with a hint instead of prompting.
+- Sessions are kept in the macOS Keychain or the Linux Secret Service (`secret-tool`), else in the
+  0600 config file with a notice (`DOUGS_CREDENTIAL_STORE=file` forces it); the password is never
+  stored. Their expiry is recorded (and kept current when Dougs renews the cookie): `whoami`
+  shows it, `doctor` warns a week ahead and fails once expired, `login --check` exits 0 or 3.
+- `logout` (`--remote` also ends the session on Dougs), `whoami`, profiles, `DOUGS_SESSION` /
+  `DOUGS_COMPANY` / `DOUGS_PROFILE`.
 - `commands --json`, `schema <type>`, `doctor` (API drift detection).
 - Tables on a TTY, JSON when piped, `--jsonl`, structured errors and stable exit codes.
 

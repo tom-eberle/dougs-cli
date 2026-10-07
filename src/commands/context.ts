@@ -14,8 +14,9 @@ import {
   type Env,
   type Profile,
   readConfig,
-  writeConfig,
 } from '../auth/config.js';
+import { readSession, saveSession } from '../auth/credentials.js';
+import type { SecretStore } from '../auth/secrets.js';
 import { DougsError, ExitCode, LOGIN_HINT } from '../output/errors.js';
 import { Output, type Writer } from '../output/format.js';
 import { sanitizeForTerminal } from '../output/style.js';
@@ -40,9 +41,13 @@ export interface Runtime {
   stdoutIsTTY: boolean;
   stdinIsTTY: boolean;
   readStdin: () => Promise<string>;
-  /** Ask a yes/no question on stderr; only called when both stdin and stdout are TTYs. */
+  /** Ask a question on stderr; only called when stdin is a TTY. */
   ask: (question: string) => Promise<string>;
+  /** Like ask, without echoing the answer (passwords). */
+  askSecret: (question: string) => Promise<string>;
   readBrowserSession: (browser: Browser) => Promise<BrowserSession>;
+  /** The OS credential store, or null to keep sessions in the 0600 config file. */
+  secrets: SecretStore | null;
 }
 
 export type AuthSource = Whoami['authSource'];
@@ -53,6 +58,8 @@ export interface AuthState {
   profileName: string;
   profile: Profile;
   source: AuthSource;
+  /** When the session cookie expires, if known. */
+  expiresAt: string | null;
 }
 
 export class Context {
@@ -62,6 +69,8 @@ export class Context {
   private authState?: Promise<AuthState>;
   private userState?: Promise<{ user: Whoami['user']; companies: Company[] }>;
   private dougsState?: Promise<Dougs>;
+  /** Session saves still in flight (a renewed cookie is saved in the background). */
+  private saving: Promise<void> = Promise.resolve();
 
   constructor(
     readonly runtime: Runtime,
@@ -93,37 +102,69 @@ export class Context {
   private async loadAuth(): Promise<AuthState> {
     const config = await readConfig(this.env);
     const profileName = activeProfileName(config, this.options.profile, this.env);
-    const profile = config.profiles[profileName] ?? {};
     const envSession = this.env.DOUGS_SESSION?.trim();
-    const session = envSession || profile.session;
+    const session =
+      envSession ||
+      (await readSession(config, profileName, this.runtime.secrets, this.env, (line) =>
+        this.out.debug(line),
+      ));
     if (!session)
       throw new DougsError('AUTH_MISSING', `Not logged in (profile "${profileName}")`, {
         exitCode: ExitCode.auth,
         hint: LOGIN_HINT,
       });
+    const profile = config.profiles[profileName] ?? {};
     const source: AuthSource = envSession ? 'env' : (profile.source ?? 'token');
     this.out.addSecret(session);
+    // Keep the stored session current when Dougs or the browser hands out a new one.
+    const persist = (value: string, expiresAt: string | null) => {
+      this.out.addSecret(value);
+      state.expiresAt = expiresAt ?? state.expiresAt;
+      if (source === 'env') return this.saving;
+      this.saving = this.saving.then(async () => {
+        await saveSession(
+          config,
+          profileName,
+          { session: value, source: profile.source ?? 'token', expiresAt: state.expiresAt },
+          this.runtime.secrets,
+          this.env,
+        );
+      });
+      return this.saving;
+    };
     const browser = (BROWSERS as readonly string[]).includes(source) ? (source as Browser) : null;
     const client = new ApiClient({
       session,
       baseUrl: this.env.DOUGS_API_BASE,
       fetch: this.runtime.fetch,
       log: (line) => this.out.debug(line),
+      onSessionCookie: (value, expiresAt) => {
+        persist(value, expiresAt).catch(() => {}); // reported by settle()
+      },
       refreshSession: browser
         ? async () => {
             const fresh = await this.runtime.readBrowserSession(browser);
-            this.out.addSecret(fresh.value);
-            config.profiles[profileName] = {
-              ...profile,
-              session: fresh.value,
-              savedAt: new Date().toISOString(),
-            };
-            await writeConfig(config, this.env);
+            await persist(fresh.value, fresh.expiresAt);
             return fresh.value;
           }
         : undefined,
     });
-    return { client, config, profileName, profile, source };
+    const state: AuthState = {
+      client,
+      config,
+      profileName,
+      profile,
+      source,
+      expiresAt: envSession ? null : (profile.sessionExpiresAt ?? null),
+    };
+    return state;
+  }
+
+  /** Wait for background session saves; called before the process exits. */
+  async settle(): Promise<void> {
+    await this.saving.catch((e) =>
+      this.out.debug(`could not save the renewed session: ${(e as Error).message}`),
+    );
   }
 
   /** Current user and the companies they can access. */

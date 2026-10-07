@@ -35,7 +35,7 @@ export class DougsError extends Error {
   }
 }
 
-export const LOGIN_HINT = 'run: dougs login --from-browser chrome';
+export const LOGIN_HINT = 'run: dougs login (or: dougs login --from-browser chrome)';
 
 export function usageError(message: string, hint?: string): DougsError {
   return new DougsError('USAGE', message, { exitCode: ExitCode.usage, hint });

@@ -44,7 +44,7 @@ export function buildProgram(runtime: Runtime): Command {
     });
   withExamples(
     program,
-    'login --from-browser chrome',
+    'login',
     'todo',
     'receipts match ./inbox --plan receipts.plan.json',
     'apply receipts.plan.json',
@@ -91,10 +91,13 @@ export async function run(argv: readonly string[], runtime: Runtime): Promise<nu
   const program = buildProgram(runtime);
   try {
     await program.parseAsync([...argv], { from: 'user' });
-    return (program as Command & { dougsContext?: Context }).dougsContext?.exitCode ?? ExitCode.ok;
+    const ctx = (program as Command & { dougsContext?: Context }).dougsContext;
+    await ctx?.settle();
+    return ctx?.exitCode ?? ExitCode.ok;
   } catch (error) {
     if (error instanceof CommanderError && error.exitCode === 0) return ExitCode.ok;
     const ctx = (program as Command & { dougsContext?: Context }).dougsContext;
+    await ctx?.settle();
     const out =
       ctx?.out ??
       new Output(

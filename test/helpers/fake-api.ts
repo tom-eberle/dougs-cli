@@ -40,6 +40,22 @@ export class FakeDougs {
   session = 'synthetic-session-value';
   overrides: Handler[] = [];
   nextAttachmentId = 900_000;
+  /**
+   * Password login. OBSERVED (web app code): endpoints, request bodies and the
+   * authenticated / mfaRequired / ssoRequired statuses. ASSUMED: HTTP 401 for a
+   * wrong password or code, and a pending cookie carrying the MFA step.
+   */
+  account = {
+    email: 'someone@example.test',
+    password: 'synthetic-password',
+    factors: [] as { type: 'totp' | 'email'; lastUsedAt?: string }[],
+    code: '123456',
+    sso: false,
+    maxAgeSeconds: 30 * 86_400,
+  };
+  emailCodesSent = 0;
+  remoteLogouts = 0;
+  private readonly pendingSession = 'synthetic-pending-mfa';
 
   constructor(ops: RawOpFixture[] = []) {
     for (const op of ops) this.ops.set(String(op.id), structuredClone(op));
@@ -72,15 +88,54 @@ export class FakeDougs {
       const res = await override(req);
       if (res) return res;
     }
+    if (req.method === 'POST' && req.path.startsWith('/auth/api/')) return this.auth(req);
     if (headers.get('cookie') !== `auth_session=${this.session}`)
       return Response.json({ message: 'Unauthorized', statusCode: 401 }, { status: 401 });
     return this.route(req);
   };
 
+  private auth(req: RecordedRequest): Response {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const pending = req.headers.get('cookie') === `auth_session=${this.pendingSession}`;
+    const unauthorized = () => Response.json({ message: 'Unauthorized' }, { status: 401 });
+    const withCookie = (data: unknown, value: string, maxAge: number) =>
+      Response.json(data, {
+        headers: {
+          'set-cookie': `auth_session=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Lax`,
+        },
+      });
+    if (req.path === '/auth/api/login') {
+      if (body.email !== this.account.email || body.password !== this.account.password)
+        return Response.json({ message: 'Identifiants invalides' }, { status: 401 });
+      if (this.account.sso) return Response.json({ status: 'ssoRequired' });
+      if (this.account.factors.length)
+        return withCookie(
+          { status: 'mfaRequired', enabledAuthFactors: this.account.factors },
+          this.pendingSession,
+          600,
+        );
+      return withCookie({ status: 'authenticated' }, this.session, this.account.maxAgeSeconds);
+    }
+    if (req.path === '/auth/api/mfa/send-email') {
+      if (!pending) return unauthorized();
+      this.emailCodesSent++;
+      return Response.json({});
+    }
+    if (req.path === '/auth/api/mfa/verify') {
+      if (!pending || body.token !== this.account.code) return unauthorized();
+      return withCookie({ status: 'authenticated' }, this.session, this.account.maxAgeSeconds);
+    }
+    return notFound();
+  }
+
   private route(req: RecordedRequest): Response {
     const c = `/companies/${COMPANY}`;
     const { method, path } = req;
     if (method === 'GET' && path === '/users/me') return Response.json(rawUser());
+    if (method === 'GET' && path === '/auth/api/logout') {
+      this.remoteLogouts++;
+      return Response.json({});
+    }
     if (method === 'GET' && path === `${c}/accounts`) return Response.json(rawAccounts());
     if (method === 'GET' && path === `${c}/categories`) return Response.json(rawCategories());
     if (method === 'GET' && path === `${c}/accounting-years`)

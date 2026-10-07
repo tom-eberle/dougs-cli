@@ -29,10 +29,10 @@ VAT to check (1)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/architecture-dark.png">
-  <img alt="dougs-cli runs on your computer: workflows read from Dougs, the plan engine writes through the same API client, using the session from your browser" src="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/architecture-light.png">
+  <img alt="dougs-cli runs on your computer: workflows read from Dougs, the plan engine writes through the same API client, using the session you logged in with" src="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/architecture-light.png">
 </picture>
 
-*Everything runs locally: workflows only read, every write goes through the plan engine, and your session comes from your own browser.*
+*Everything runs locally: workflows only read, every write goes through the plan engine, and your session stays in your OS keychain.*
 
 ## Install
 
@@ -46,9 +46,8 @@ dougs --version
 ## 60-second quickstart
 
 ```sh
-# 1. Log in by reusing your browser session (you must be logged in at app.dougs.fr).
-#    macOS reads the cookie via the "Chrome Safe Storage" keychain item — allow the prompt.
-dougs login --from-browser chrome        # or brave, edge, arc
+# 1. Log in with your Dougs email and password (and your 2FA code, if you use one).
+dougs login
 
 # 2. Check everything works.
 dougs whoami
@@ -62,8 +61,26 @@ dougs ops list --unvalidated --limit 20
 dougs ops get 10001
 ```
 
-No browser on this machine, or Windows? Copy the `auth_session` cookie value from your
-browser's dev tools and pipe it in: `pbpaste | dougs login --with-token`.
+## Logging in
+
+| | |
+|---|---|
+| `dougs login` | The default. Asks for your email, your password (not echoed) and, when your account has two-factor authentication, the code from your authenticator app or the one Dougs emails you. |
+| `dougs login --from-browser chrome` | Reuse the session of a browser where you are logged in to app.dougs.fr (also `brave`, `edge`, `arc`; macOS, Linux best effort). The only way for accounts that sign in with Google. Such sessions refresh themselves from the browser. |
+| `pbpaste \| dougs login --with-token` | Paste the `auth_session` cookie value copied from your browser's dev tools. |
+| `dougs login --email you@example.com < password.txt` | Scripts: the password comes from stdin. If Dougs asks for a second factor it stops with `MFA_NEEDS_TERMINAL`. |
+| `DOUGS_SESSION=… dougs …` | CI and sandboxes: nothing is stored. |
+
+Your password goes only to Dougs and is never stored; only the session that comes back is kept,
+in the **macOS Keychain**, or the **Secret Service** on Linux (through libsecret's `secret-tool`).
+Without one (Windows, containers, or `DOUGS_CREDENTIAL_STORE=file`) it goes in the config file
+with mode 0600, and `dougs login` says so. Sessions saved by earlier builds move to the OS store
+on first use.
+
+`dougs whoami` shows when the session expires, `dougs doctor` warns a week before and fails once
+it has, and `dougs login --check` exits 0 (valid) or 3 (missing or expired) without printing
+anything, for scripts and agents to call before long runs. `dougs logout` forgets the session;
+`dougs logout --remote` also ends it on Dougs.
 
 ## Workflows
 
@@ -256,7 +273,7 @@ Run `dougs <command> --help` for flags and examples.
 - **Never hangs.** Commands that change data ask once in a terminal; anywhere else they refuse
   with exit code 2 unless `--yes` is given. No pagers.
 - **Structured errors.** In JSON mode: one line on stderr,
-  `{"error":{"code":"AUTH_EXPIRED","message":"…","hint":"run: dougs login --from-browser chrome","status":401}}`.
+  `{"error":{"code":"AUTH_EXPIRED","message":"…","hint":"run: dougs login (or: dougs login --from-browser chrome)","status":401}}`.
 
 | Exit | Meaning |
 |---|---|
@@ -281,6 +298,8 @@ go through plans a human can review.
 - `dougs commands --json` lists every command, flag and example; `dougs schema <type>` gives JSON
   Schemas for outputs and plan files.
 - In CI or sandboxes, pass the session with `DOUGS_SESSION` and the company with `DOUGS_COMPANY`.
+- Call `dougs login --check` before a long run. Logging in stays with the human: an agent never
+  types or stores the password or the cookie.
 
 A typical agent loop: `dougs todo --json` → propose a plan (`vat check --plan`, `receipts match
 --plan`, `rules apply --plan`, or a hand-written plan) → a human reviews → `dougs apply plan.json
@@ -290,7 +309,8 @@ A typical agent loop: `dougs todo --json` → propose a plan (`vat check --plan`
 
 | | |
 |---|---|
-| Config file | `$XDG_CONFIG_HOME/dougs-cli/config.json` (default `~/.config/…`), mode 0600 |
+| Config file | `$XDG_CONFIG_HOME/dougs-cli/config.json` (default `~/.config/…`), mode 0600: profiles, companies, session expiry |
+| Session | macOS Keychain or Linux Secret Service (service `dougs-cli`, account = profile name); the config file when neither is available or with `DOUGS_CREDENTIAL_STORE=file` |
 | Profiles | `--profile <name>` / `DOUGS_PROFILE`; `dougs login --profile work …` |
 | Company | `--company <id>` / `DOUGS_COMPANY`; chosen automatically when you have one |
 | Session override | `DOUGS_SESSION` (takes precedence over stored credentials) |
@@ -301,8 +321,8 @@ and retries.
 
 ## Privacy and politeness
 
-- Your session cookie is stored only in the config file (0600) and is redacted from logs
-  (`--verbose`), errors and plans.
+- Your password is never stored. The session cookie is kept in the OS credential store (or the
+  0600 config file) and is redacted from logs (`--verbose`), errors and plans.
 - Requests identify themselves (`User-Agent: dougs-cli/<version>`), run at most 4 at a time, and
   only GETs are retried (on 429/5xx/network errors, with backoff).
 - Document downloads follow Dougs' signed storage links without sending your cookie to them.

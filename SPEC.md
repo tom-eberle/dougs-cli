@@ -67,11 +67,22 @@ categorising, pre-closing checks — in minutes, safely.
 - `DOUGS_SESSION` env var overrides stored credentials (CI/agents).
 - On a 401/403 when the credential came from a browser, transparently re-read the
   browser cookie once before failing (sessions rotate).
+- `dougs login` (default, interactive): email, hidden password and the second factor
+  Dougs asks for, through `/auth/api/login` and `/auth/api/mfa/*` as the web app does;
+  `--email` with the password on stdin for scripts; no TTY and no flag → exit 2 with a hint.
+  The password is never stored.
+- Sessions live in the OS credential store (macOS Keychain via `security`, Linux Secret
+  Service via `secret-tool`), else in the config file (0600) with a notice; file-stored
+  sessions migrate on first use. The expiry is recorded when known (Set-Cookie or browser
+  cookie): `whoami` shows it, `doctor` warns < 7 days and fails when expired,
+  `dougs login --check` exits 0/3 silently unless `--json`.
 - Config at `$XDG_CONFIG_HOME/dougs-cli/config.json` (default `~/.config/…`), file
-  mode 0600: `{ profiles: { default: { session, source, companyId } }, activeProfile }`.
+  mode 0600: `{ profiles: { default: { sessionStore | session, sessionExpiresAt, source,
+  email, companyId } }, activeProfile }`.
 - `--profile <name>` / `DOUGS_PROFILE`; `--company <id>` / `DOUGS_COMPANY`; if a user
   has exactly one company it is selected automatically.
-- `dougs logout`, `dougs whoami` (user + companies + active company + auth source).
+- `dougs logout` (`--remote` also calls `GET /auth/api/logout`), `dougs whoami` (user +
+  companies + active company + auth source + session storage and expiry).
 - `DOUGS_API_BASE` overrides `https://app.dougs.fr` (tests only).
 
 ## 4. Commands

@@ -38,6 +38,23 @@ The current user, including the companies they can access.
 
 Also present in the bundle: `GET /users/{id}/companies`, `GET /users/me?refreshSession=true`.
 
+## Logging in
+
+Read from the web app's sign-in pages; not exercised by the test suite against the real API
+(it is modelled in `test/helpers/fake-api.ts`). No captcha or device check is involved.
+
+| Request | Body | Answer |
+|---|---|---|
+| `POST /auth/api/login` | `{"email", "password"}` | `{"status": "authenticated"}`, `{"status": "mfaRequired", "enabledAuthFactors": [{"type": "totp" \| "email", "lastUsedAt"}]}` or `{"status": "ssoRequired"}` (Google sign-in only) |
+| `POST /auth/api/mfa/send-email` | `{}` | Sends the email code (email factor) |
+| `POST /auth/api/mfa/verify` | `{"token": "123456", "type": "totp" \| "email"}` | `{"status": "authenticated"}` |
+| `GET /auth/api/logout` | — | Ends the session |
+
+The session arrives as `Set-Cookie: auth_session=…` (with its expiry); the MFA steps carry the
+cookie set by the login request. The web app picks the most recently used factor, else the
+authenticator app (`totp`); so does `dougs login`. Also in the bundle: `POST /auth/api/sso/google`
+(Google ID token), `GET /auth/api/mfa/enabled-factors`, password reset endpoints.
+
 ## Operations
 
 An **operation** is a bank line (or manual entry) with one or more **breakdowns** (accounting
@@ -256,6 +273,5 @@ Box codes used by `dougs vat summary` (labels from `GET /declaration-templates/C
 | VAT assistant (`GET …/actions/vat-assistant`) | Shape is a UI wizard state; no stable data to expose |
 | Operation history (`GET …/operations/{id}/changes`) | Returns 403 for regular users |
 | Filing/confirming declarations (`…/declarations/{id}/actions/confirm`) | Out of scope: the CLI never files anything |
-| Password / 2FA login (`POST /auth/api/login`, `/auth/api/mfa/*`) | Out of scope; use the browser session or `--with-token` |
 | Sales invoices, e-commerce dispatch edits, cash register | Not part of the v0.1 workflows; reachable with `dougs api` |
 | App-store revenue ventilation (EU / non-EU split) | Planned for v0.2 |

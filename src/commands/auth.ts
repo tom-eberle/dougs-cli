@@ -5,15 +5,35 @@ import {
   activeProfileName,
   BROWSERS,
   type Browser,
-  configPath,
+  type CredentialSource,
   readConfig,
-  writeConfig,
 } from '../auth/config.js';
-import { DougsError, ExitCode, usageError } from '../output/errors.js';
+import { daysLeft, forgetSession, saveSession, sessionLocation } from '../auth/credentials.js';
+import { type AuthFactor, passwordLogin } from '../auth/password-login.js';
+import { DougsError, ExitCode, toDougsError, usageError } from '../output/errors.js';
 import { style } from '../output/style.js';
 import { renderKeyValues } from '../output/table.js';
-import { contextOf } from './context.js';
+import { type Context, contextOf } from './context.js';
 import { withExamples } from './shared.js';
+
+const NON_INTERACTIVE_HINT =
+  'scripts and agents: dougs login --with-token < session.txt, DOUGS_SESSION=<cookie>, or dougs login --email <address> with the password on stdin';
+
+interface LoginOptions {
+  email?: string;
+  mfa?: AuthFactor;
+  fromBrowser?: Browser;
+  withToken?: boolean;
+  check?: boolean;
+}
+
+interface ObtainedSession {
+  session: string;
+  source: CredentialSource;
+  expiresAt: string | null;
+  browserProfile?: string;
+  email?: string;
+}
 
 function cleanToken(input: string): string {
   const value = input
@@ -29,43 +49,144 @@ function cleanToken(input: string): string {
   return value;
 }
 
+/** Email + password (+ second factor), prompting on a terminal or reading the password from stdin. */
+async function passwordSession(ctx: Context, opts: LoginOptions): Promise<ObtainedSession> {
+  const interactive = ctx.runtime.stdinIsTTY;
+  if (!interactive && !opts.email)
+    throw usageError('dougs login needs a terminal to ask for your password', NON_INTERACTIVE_HINT);
+  const config = await readConfig(ctx.env);
+  const previous = config.profiles[activeProfileName(config, ctx.options.profile, ctx.env)]?.email;
+  let email = opts.email?.trim();
+  if (!email)
+    email =
+      (await ctx.runtime.ask(`Email${previous ? ` [${previous}]` : ''}: `)).trim() || previous;
+  if (!email?.includes('@')) throw usageError('An email address is required');
+  const password = interactive
+    ? await ctx.runtime.askSecret('Password: ')
+    : (await ctx.runtime.readStdin()).replace(/\r?\n$/, '');
+  if (!password)
+    throw usageError(
+      'No password given',
+      interactive ? undefined : `pipe it on stdin: dougs login --email ${email} < password.txt`,
+    );
+  ctx.out.addSecret(password);
+  const result = await passwordLogin({
+    email,
+    password,
+    factor: opts.mfa,
+    prompts: interactive
+      ? {
+          code: (factor) =>
+            ctx.runtime.ask(
+              factor === 'totp' ? 'Code from your authenticator app: ' : 'Code from the email: ',
+            ),
+          info: (message) => ctx.out.info(message),
+        }
+      : null,
+    fetch: ctx.runtime.fetch,
+    baseUrl: ctx.env.DOUGS_API_BASE,
+    log: (line) => ctx.out.debug(line),
+  });
+  return { session: result.session, source: 'password', expiresAt: result.expiresAt, email };
+}
+
+async function obtainSession(ctx: Context, opts: LoginOptions): Promise<ObtainedSession> {
+  if (opts.fromBrowser) {
+    const found = await ctx.runtime.readBrowserSession(opts.fromBrowser);
+    return {
+      session: found.value,
+      source: opts.fromBrowser,
+      expiresAt: found.expiresAt,
+      browserProfile: found.profile,
+    };
+  }
+  if (opts.withToken)
+    return { session: cleanToken(await ctx.runtime.readStdin()), source: 'token', expiresAt: null };
+  return passwordSession(ctx, opts);
+}
+
+/** `login --check`: exit 0 when the stored session works, 3 when it is missing or expired. */
+async function checkLogin(ctx: Context): Promise<void> {
+  const config = await readConfig(ctx.env);
+  const profile = activeProfileName(config, ctx.options.profile, ctx.env);
+  let reason: 'missing' | 'expired' | null = null;
+  try {
+    await ctx.user();
+  } catch (e) {
+    const error = toDougsError(e);
+    if (error.exitCode !== ExitCode.auth) throw e;
+    reason = error.code === 'AUTH_MISSING' ? 'missing' : 'expired';
+  }
+  const auth = reason === 'missing' ? null : await ctx.auth();
+  if (reason) ctx.exitCode = ExitCode.auth;
+  if (ctx.options.json)
+    ctx.out.result({
+      valid: !reason,
+      reason,
+      profile,
+      authSource: auth?.source ?? null,
+      sessionExpiresAt: auth?.expiresAt ?? null,
+    });
+}
+
+function expiryText(expiresAt: string | null): string | null {
+  const days = daysLeft(expiresAt);
+  if (days === null || !expiresAt) return null;
+  if (days < 0) return style.red(`expired on ${expiresAt.slice(0, 10)}`);
+  const text = `expires ${expiresAt.slice(0, 10)} (in ${Math.floor(days)} day${Math.floor(days) === 1 ? '' : 's'})`;
+  return days < 7 ? style.yellow(text) : text;
+}
+
 export function registerAuthCommands(program: Command): void {
   withExamples(
     program
       .command('login')
-      .description('Store a Dougs session, read from your browser or from stdin')
+      .description(
+        'Log in to Dougs: email and password by default, or reuse a browser session or a token',
+      )
+      .option(
+        '--email <address>',
+        'Log in as this user; without a terminal, read the password from stdin',
+      )
+      .addOption(
+        new Option('--mfa <factor>', 'Second factor to use when Dougs asks for one').choices([
+          'totp',
+          'email',
+        ]),
+      )
       .addOption(
         new Option(
           '--from-browser <browser>',
-          'Read the session cookie from this browser (macOS; Linux best effort)',
+          'Reuse the session cookie of this browser (macOS; Linux best effort)',
         ).choices(BROWSERS),
       )
-      .option('--with-token', 'Read the auth_session cookie value from stdin'),
+      .option('--with-token', 'Read the auth_session cookie value from stdin')
+      .option(
+        '--check',
+        'Exit 0 if the stored session works, 3 if missing or expired (quiet unless --json)',
+      ),
+    'login',
+    'login --email you@example.com < password.txt',
     'login --from-browser chrome',
     'login --with-token < session.txt',
-    'login --from-browser brave --profile work --company 999999',
-  ).action(async (opts: { fromBrowser?: Browser; withToken?: boolean }, cmd: Command) => {
+    'login --check --json',
+  ).action(async (opts: LoginOptions, cmd: Command) => {
     const ctx = contextOf(cmd);
-    if (!!opts.fromBrowser === !!opts.withToken)
-      throw usageError(
-        'Choose exactly one of --from-browser <browser> or --with-token',
-        'e.g.: dougs login --from-browser chrome',
-      );
-    let session: string;
-    let expiresAt: string | null = null;
-    let browserProfile: string | null = null;
-    if (opts.fromBrowser) {
-      const found = await ctx.runtime.readBrowserSession(opts.fromBrowser);
-      session = found.value;
-      expiresAt = found.expiresAt;
-      browserProfile = found.profile;
-    } else {
-      session = cleanToken(await ctx.runtime.readStdin());
+    const modes = [opts.fromBrowser, opts.withToken, opts.email ?? opts.mfa].filter(Boolean);
+    if (opts.check) {
+      if (modes.length) throw usageError('--check cannot be combined with a way to log in');
+      return checkLogin(ctx);
     }
-    ctx.out.addSecret(session);
+    if (modes.length > 1)
+      throw usageError(
+        'Choose one way to log in: --email, --from-browser <browser> or --with-token',
+        'e.g.: dougs login (asks for your email and password)',
+      );
+    const obtained = await obtainSession(ctx, opts);
+    ctx.out.addSecret(obtained.session);
 
     const client = new ApiClient({
-      session,
+      session: obtained.session,
       baseUrl: ctx.env.DOUGS_API_BASE,
       fetch: ctx.runtime.fetch,
       log: (l) => ctx.out.debug(l),
@@ -78,45 +199,55 @@ export function registerAuthCommands(program: Command): void {
 
     const config = await readConfig(ctx.env);
     const profileName = activeProfileName(config, ctx.options.profile, ctx.env);
-    const previous = config.profiles[profileName] ?? {};
+    const previous = config.profiles[profileName]?.companyId;
     const companyId =
       ctx.options.company ??
       (companies.length === 1
         ? companies[0]!.id
-        : previous.companyId && companies.some((c) => c.id === previous.companyId)
-          ? previous.companyId
+        : previous && companies.some((c) => c.id === previous)
+          ? previous
           : undefined);
-    config.profiles[profileName] = {
-      ...previous,
-      session,
-      source: opts.fromBrowser ?? 'token',
-      companyId,
-      savedAt: new Date().toISOString(),
-    };
     config.activeProfile = profileName;
-    await writeConfig(config, ctx.env);
+    const saved = await saveSession(
+      config,
+      profileName,
+      {
+        session: client.currentSession,
+        source: obtained.source,
+        expiresAt: obtained.expiresAt,
+        email: obtained.email,
+        companyId,
+      },
+      ctx.runtime.secrets,
+      ctx.env,
+    );
+    if (saved.fileFallback)
+      ctx.out.info(
+        style.dim(
+          `No OS credential store in use: the session is saved in ${saved.location} (mode 0600)`,
+        ),
+      );
 
     const result = {
       profile: profileName,
-      source: opts.fromBrowser ?? 'token',
-      browserProfile,
-      sessionExpiresAt: expiresAt,
+      source: obtained.source,
+      browserProfile: obtained.browserProfile ?? null,
+      sessionExpiresAt: obtained.expiresAt,
       user: { id: String(raw.id), name: raw.profile?.fullName ?? null, email: raw.email ?? null },
       companies,
       activeCompany: companyId ?? null,
-      configPath: configPath(ctx.env),
+      sessionStorage: saved.location,
     };
     ctx.out.result(result, (r) => {
+      const company = companies.find((c) => c.id === r.activeCompany);
       const lines = [
         `${style.green('✓')} Logged in${r.user.name ? ` as ${r.user.name}` : ''} via ${r.source}${r.browserProfile ? ` (browser profile "${r.browserProfile}")` : ''}`,
       ];
-      if (r.sessionExpiresAt)
-        lines.push(style.dim(`  session valid until ${r.sessionExpiresAt.slice(0, 10)}`));
-      lines.push(style.dim(`  saved to profile "${r.profile}" in ${r.configPath}`));
+      const expiry = expiryText(r.sessionExpiresAt);
+      if (expiry) lines.push(style.dim(`  session ${expiry}`));
+      lines.push(style.dim(`  profile "${r.profile}", session kept in ${r.sessionStorage}`));
       if (r.activeCompany)
-        lines.push(
-          `  company ${r.activeCompany}${companies.find((c) => c.id === r.activeCompany)?.name ? ` (${companies.find((c) => c.id === r.activeCompany)?.name})` : ''}`,
-        );
+        lines.push(`  company ${r.activeCompany}${company?.name ? ` (${company.name})` : ''}`);
       else if (companies.length > 1)
         lines.push(
           style.yellow(`  ${companies.length} companies: pass --company <id> or set DOUGS_COMPANY`),
@@ -126,28 +257,42 @@ export function registerAuthCommands(program: Command): void {
   });
 
   withExamples(
-    program.command('logout').description('Forget the stored session for the active profile'),
+    program
+      .command('logout')
+      .description('Forget the stored session of the active profile')
+      .option('--remote', 'Also end the session on Dougs, as logging out of the web app does'),
     'logout',
+    'logout --remote',
     'logout --profile work',
-  ).action(async (_opts: unknown, cmd: Command) => {
+  ).action(async (opts: { remote?: boolean }, cmd: Command) => {
     const ctx = contextOf(cmd);
+    let remote: boolean | undefined;
+    if (opts.remote) {
+      try {
+        const { client } = await ctx.auth();
+        await (await client.request('GET', '/auth/api/logout')).body?.cancel();
+        remote = true;
+      } catch (e) {
+        remote = false;
+        ctx.out.warn(`could not end the session on Dougs: ${toDougsError(e).message}`);
+      }
+    }
     const config = await readConfig(ctx.env);
     const profileName = activeProfileName(config, ctx.options.profile, ctx.env);
-    const profile = config.profiles[profileName];
-    const hadSession = !!profile?.session;
-    if (profile) config.profiles[profileName] = { companyId: profile.companyId };
-    await writeConfig(config, ctx.env);
-    ctx.out.result({ profile: profileName, loggedOut: hadSession }, (r) =>
-      r.loggedOut
-        ? `${style.green('✓')} Logged out of profile "${r.profile}"`
-        : `Profile "${r.profile}" had no stored session`,
+    const loggedOut = await forgetSession(config, profileName, ctx.runtime.secrets, ctx.env);
+    ctx.out.result(
+      { profile: profileName, loggedOut, ...(remote === undefined ? {} : { remote }) },
+      (r) =>
+        r.loggedOut
+          ? `${style.green('✓')} Logged out of profile "${r.profile}"${r.remote ? ' (session ended on Dougs too)' : ''}`
+          : `Profile "${r.profile}" had no stored session`,
     );
   });
 
   withExamples(
     program
       .command('whoami')
-      .description('Show the user, their companies, the active company and where auth comes from'),
+      .description('Show the user, their companies, the active company and the session in use'),
     'whoami',
     'whoami --json | jq .activeCompany',
   ).action(async (_opts: unknown, cmd: Command) => {
@@ -166,6 +311,9 @@ export function registerAuthCommands(program: Command): void {
       activeCompany,
       profile: auth.profileName,
       authSource: auth.source,
+      sessionStorage:
+        auth.source === 'env' ? 'DOUGS_SESSION' : sessionLocation(auth.profile, ctx.env),
+      sessionExpiresAt: auth.expiresAt,
     };
     ctx.out.result(data, (w) =>
       renderKeyValues([
@@ -185,10 +333,13 @@ export function registerAuthCommands(program: Command): void {
           'auth',
           w.authSource === 'env'
             ? 'DOUGS_SESSION environment variable'
-            : w.authSource === 'token'
-              ? 'token (stdin)'
-              : `${w.authSource} cookie (auto-refreshes)`,
+            : w.authSource === 'password'
+              ? 'email and password'
+              : w.authSource === 'token'
+                ? 'token (stdin)'
+                : `${w.authSource} cookie (auto-refreshes)`,
         ],
+        ['session', [w.sessionStorage, expiryText(w.sessionExpiresAt)].filter(Boolean).join(', ')],
       ]),
     );
   });
