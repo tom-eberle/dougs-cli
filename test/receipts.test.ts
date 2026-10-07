@@ -210,7 +210,7 @@ describe('real-use fixes', () => {
   });
 
   it('honours the <opId>_ prefix: that operation, or a skip, never another one', () => {
-    const named = op({ id: 320, date: '2026-01-05', wording: 'OLD THING', amount: 99 });
+    const named = op({ id: 320, date: '2026-01-05', wording: 'OLD THING', amount: 48 });
     const lookalike = op({ id: 321, date: '2026-08-02', wording: 'NIMBUS', amount: 48 });
     const attached = op({ id: 322, amount: 10, attachments: [{ name: 'inv-7.pdf' }] });
     const byId = new Map([named, attached].map((o) => [o.id, o]));
@@ -227,5 +227,27 @@ describe('real-use fixes', () => {
     expect(report.alreadyAttached).toEqual([{ file: '/inbox/322_inv-7.pdf', op: '322' }]);
     // 999 is not an operation: ordinary matching applies.
     expect(steps[1]).toMatchObject({ op: '321' });
+  });
+});
+
+describe('opId prefix sanity check (N1)', () => {
+  it('does not pin a file whose amount and date both disagree with the prefixed operation', () => {
+    const named = op({ id: 330, date: '2026-01-05', wording: 'OLD THING', amount: 99 });
+    const byId = new Map([[named.id, named]]);
+    const unrelated = doc({
+      name: '330_nimbus.pdf',
+      text: 'NIMBUS',
+      totals: [48],
+      dates: ['2026-08-02'],
+    });
+    const related = doc({ name: '330_old-thing.pdf', totals: [99] });
+    const { report, steps } = matchReceipts([unrelated, related], [named], { minScore: 0.8, byId });
+    expect(report.ambiguous[0]).toMatchObject({
+      file: '/inbox/330_nimbus.pdf',
+      reason: expect.stringContaining("don't match"),
+    });
+    expect(steps).toEqual([
+      expect.objectContaining({ op: '330', file: '/inbox/330_old-thing.pdf' }),
+    ]);
   });
 });

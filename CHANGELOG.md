@@ -4,67 +4,57 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
-
-### Added
-- Sales VAT exemptions: on sales lines `--vat-exempt outside-eu | inside-eu | not-applicable`
-  writes Dougs' `exemption:inbound:*` values (e.g. a B2B service sold outside the EU).
-- `todo` / `close-check` no longer ask for receipts on transfers between accounts, capital,
-  loans, subsidies, FX and tax settlements (by accounting class); `--strict` includes them.
-- `--vat-exempt` / `vatExempt` accept every purchase reason Dougs offers: `not-applicable`
-  (supplier under the VAT franchise, "TVA non applicable") and `outside-eu-not-imported`, besides
-  `outside-eu`, `inside-eu` and `no-document`. Purchase exemptions are refused on sales lines.
-
-### Fixed
-- `vat check` no longer flags zero VAT on lines outside VAT (bank fees, insurance, transfers…,
-  Dougs `hasVat: false` or a category without VAT), even with a foreign invoice; plans no longer
-  contain steps apply would refuse — they are listed as `notPlannable` with the reason.
-- Editing a validated operation (403 on live data): like the web app, the CLI now reopens it,
-  edits, and validates it again, reporting both steps; a refused reopening is
-  `VALIDATED_READONLY`. A 403 on a write no longer triggers a session refresh or a "log in
-  again" hint.
-- `receipts match` only targets operations without a document by default (`--include-attached`
-  to widen) and reports how many files it excluded; invoice/receipt files with the same number
-  count as the same document; `<opId>_name` files go to that operation or are skipped; a date in
-  the file name decides the billing period, so a month-off charge no longer scores 1.00.
-
-## [0.1.0] — 2026-10-06
+## [0.1.0] — 2026-10-07
 
 First release, **experimental**: the write path is guarded and tested against a model of the
-Dougs API, but mutations have not yet been exercised widely against the live service. Review
-plans, start with `--dry-run`, and keep your accountant in the loop.
+Dougs API, and exercised on a real company only in a limited way. Review plans, start with
+`--dry-run`, and keep your accountant in the loop.
 
 ### Workflows
-- `dougs todo`: one worklist of missing receipts (with the 150 € full-invoice rule),
-  uncategorized, unvalidated, VAT-suspect and rule-matching operations, with suggested fixes.
+- `dougs todo`: one worklist with overdue declarations first, then missing receipts (with the
+  150 € full-invoice rule; transfers, capital, loans, subsidies, FX and tax settlements are
+  skipped unless `--strict`), uncategorized, unvalidated, VAT-suspect and rule-matching
+  operations, with suggested fixes.
 - `dougs receipts match`: match local PDFs/images to operations by amount (TTC, HT, original
-  currency), date window and vendor name; writes attach plans for confident matches.
+  currency), date and vendor name. Only operations without a document are targets by default
+  (`--include-attached`); invoice/receipt files with the same number count as the same
+  document; `<opId>_name` files go to that operation (when amount or date agrees) or are skipped;
+  a date in the file name decides the billing period.
 - `dougs vat check`: arithmetic, rate, reverse-charge, missing-exemption and invoice-VAT checks,
-  using Dougs' own invoice reading and PDF text; writes fix plans for unambiguous cases.
-- `dougs vat summary`: monthly CA3 estimate, side by side with the filed declaration.
-- `dougs rules init|apply`: local, versionable categorisation rules and a starter file inferred
-  from history.
+  using Dougs' own invoice reading and PDF text. The attached invoice wins over the built-in
+  vendor list; lines outside VAT (bank fees, insurance, transfers…) are never flagged.
+- `dougs vat summary`: monthly CA3 estimate beside Dougs' filed return or draft, with the
+  declaration's status, due date and lateness; box 22 from the last filed return, as Dougs does.
+- `dougs rules init|apply`: local, versionable categorisation rules (unvalidated operations by
+  default) and a starter file inferred from history.
 - `dougs close-check`: pre-closing report (receipts, categories, validation, VAT, duplicates,
-  document totals).
+  document totals, overdue declarations).
 - `dougs apply`: review and execute plans — idempotent, resumable, verifies every write, audit
   report.
 
-### Safety
-- Plans are treated as untrusted input: attach steps upload only receipt file types from the
-  plan's directory or the current directory (symlinks resolved) unless `--allow-any-path`;
-  previews and confirmations show every file's absolute path.
-- CSV export neutralizes spreadsheet formulas in text columns.
-- Human output strips terminal control characters coming from data; JSON is never altered.
+### VAT exemptions
+- `--vat-exempt` / `vatExempt` cover every reason Dougs offers: on purchases `outside-eu`,
+  `inside-eu`, `outside-eu-not-imported`, `not-applicable` (supplier under the VAT franchise,
+  "TVA non applicable") and `no-document`; on sales `outside-eu`, `inside-eu` and
+  `not-applicable`. The line decides purchase vs sales values (a supplier refund is a purchase).
 
+### Safety
 - Never sends `?force=true`: locked operations are refused (`LOCKED`) for edits, validation and
   detaching; periods covered by a filed VAT return (CA3, CA12) and closed years are protected
-  (`--allow-filed-periods`); validation is refused when Dougs would show errors; every write is
-  checked for side effects (exit 7) and partial application.
-- VAT fixes are planned only on strong evidence (`--include-warnings` for the rest); the attached
-  invoice wins over the built-in vendor list.
-- `vat summary` shows Dougs' filed return or draft side by side, the declaration status and
-  lateness, and takes box 22 from the last filed return as Dougs does; `todo`/`close-check` report
-  overdue declarations.
+  (`--allow-filed-periods`); validation is refused when Dougs would show errors.
+- Validated operations are reopened, edited and validated again, as the web app does; an
+  operation validated at plan time ends validated, even when a plan is re-run after an
+  interruption. A refused reopening is `VALIDATED_READONLY`; a 403 on a write never triggers a
+  session refresh.
+- Every write is re-read and checked for side effects (exit 7) and partial application
+  (`PARTIALLY_APPLIED`, with what was saved).
+- Plans contain only strong-evidence VAT fixes (`--include-warnings` for the rest) and only steps
+  apply would accept; refused ones are listed as `notPlannable` with the reason.
+- Plans are treated as untrusted input: attach steps upload only receipt file types from the
+  plan's directory or the current directory (symlinks resolved, read once) unless
+  `--allow-any-path`; previews and confirmations show every file's absolute path.
+- CSV export neutralizes spreadsheet formulas in text columns; human output strips terminal
+  control characters coming from data; JSON is never altered.
 
 ### Building blocks
 - `ops list|get|set|attach|detach|validate|download`, `receipts download`, `categories list`,
@@ -73,3 +63,10 @@ plans, start with `--dry-run`, and keep your accountant in the loop.
   `logout`, `whoami`, profiles, `DOUGS_SESSION` / `DOUGS_COMPANY` / `DOUGS_PROFILE`.
 - `commands --json`, `schema <type>`, `doctor` (API drift detection).
 - Tables on a TTY, JSON when piped, `--jsonl`, structured errors and stable exit codes.
+
+### Known issues
+- Customer refunds (money paid back to a customer) get sales exemption values by symmetry with
+  supplier refunds; no real instance has been seen yet, so preview such a change with
+  `--dry-run` first.
+- Some server behaviours modelled in the test harness are marked ASSUMED
+  (`test/helpers/fake-api.ts`); the live service may differ.

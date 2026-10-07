@@ -69,13 +69,17 @@ dougs apply fixes.plan.json --dry-run        # re-reads each operation, shows be
 dougs apply fixes.plan.json                  # asks once, writes, verifies every change
 ```
 
-`apply` is idempotent: steps already done are skipped, so re-running a half-applied plan is safe.
+`apply` is idempotent: steps already done are skipped, so re-running a half-applied plan file is safe.
 If an operation changed since the plan was made, its step is a `conflict` (exit 7) unless you pass
 `--force`. After every write the operation is re-read: anything else Dougs changed is reported as
 a side effect.
 
 Guard-rails on every change:
 
+- **Validated operations are reopened, edited and validated again**, as the Dougs web app does
+  (Dougs refuses direct edits to them). Both steps appear in the report. If a run is interrupted
+  in between, re-running the same plan file validates the operation again; after a single
+  command, run `dougs ops validate <id>` (the error says so).
 - **Locked operations are never edited, validated or detached** (`LOCKED`); dougs-cli never asks
   Dougs to unlock a ledger. Attaching a receipt stays allowed.
 - **Filed periods are protected**: edits, validations and detaches in a period whose VAT return is

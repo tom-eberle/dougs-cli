@@ -314,10 +314,20 @@ export function registerOpsCommands(program: Command): void {
       o: { dryRun?: boolean; yes?: boolean; allowFiledPeriods?: boolean },
       cmd: Command,
     ) => {
+      const ctx = contextOf(cmd);
+      const { op } = await (await ctx.dougs()).getOperation(id);
       await runSteps(
-        contextOf(cmd),
+        ctx,
         'ops detach',
-        [{ op: id, action: 'detach', attachmentId, why: 'requested on the command line' }],
+        [
+          {
+            op: id,
+            action: 'detach',
+            attachmentId,
+            expect: expectFor(op, { action: 'detach' }),
+            why: 'requested on the command line',
+          },
+        ],
         o,
       );
     },

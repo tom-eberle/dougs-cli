@@ -50,7 +50,7 @@ export const expectSchema = z
     attachments: z.number().int().optional().describe('Number of attachments'),
   })
   .describe(
-    'State observed when the plan was made; apply skips the step if it changed (unless --force)',
+    'State observed when the plan was made; if it changed, apply reports the step as a conflict (exit 7) unless --force. `validated` is recorded to restore it after a reopen, not to detect drift.',
   );
 export type Expectation = z.infer<typeof expectSchema>;
 

@@ -147,8 +147,10 @@ describe('S2 side effects are reported', () => {
     const api = new FakeDougs([
       rawOp({ id: 20, category: 'ads', exemption: 'exemption:outbound:outsideEuropeanUnion' }),
     ]);
-    api.onUpdate = (_prev, next) => {
-      next.validated = false; // server un-validates on edit
+    api.onUpdate = (prev, next) => {
+      // Server-side reaction to a re-categorization: the exemption is dropped.
+      if (next.breakdowns[0]!.categoryId !== prev.breakdowns[0]!.categoryId)
+        next.breakdowns[0]!.associationData = {};
     };
     const report = await applyPlan(
       dougsFor(api),
@@ -157,7 +159,7 @@ describe('S2 side effects are reported', () => {
     expect(report.meta.sideEffects).toBe(1);
     expect(report.results[0]).toMatchObject({
       status: 'applied',
-      sideEffects: [{ field: 'validated', from: true, to: false }],
+      sideEffects: [{ field: 'breakdown 20 vatExemptReason', from: 'outside-eu', to: null }],
     });
   });
 });
@@ -537,7 +539,14 @@ describe('N items', () => {
       action: 'set',
       set: { vatExempt: 'outside-eu' },
     });
-    expect(Object.keys(e).sort()).toEqual(['category', 'vatAmount', 'vatExemptReason', 'vatRate']);
+    // validated is recorded to restore it after a reopen, never to detect drift.
+    expect(Object.keys(e).sort()).toEqual([
+      'category',
+      'validated',
+      'vatAmount',
+      'vatExemptReason',
+      'vatRate',
+    ]);
   });
 
   it('N4: a common file name attached elsewhere does not hide a match', () => {
@@ -763,9 +772,9 @@ describe('re-review R items', () => {
   });
 
   it('N-A: side effects make the command exit 7', async () => {
-    const api = new FakeDougs([rawOp({ id: 260 })]);
+    const api = new FakeDougs([rawOp({ id: 260, validated: false })]);
     api.onUpdate = (_prev, next) => {
-      next.validated = false;
+      next.breakdowns[0]!.vatAmountWithRecoverageRate = 0;
     };
     const r = await runCli(api, ['ops', 'set', '260', '--memo', 'x', '--yes']);
     expect(r.code).toBe(7);
@@ -1176,5 +1185,146 @@ describe('movements that never need a receipt', () => {
       await runCli(ops(), ['close-check', '--year', '2025', '--no-documents', '--strict'])
     ).json() as { meta: { counts: Record<string, number> } };
     expect(strict.meta.counts.MISSING_RECEIPT).toBe(4);
+  });
+});
+
+describe('F1: an operation validated at plan time ends validated, even after an interruption', () => {
+  it('final validation fails → PARTIALLY_APPLIED; re-running the plan validates it again', async () => {
+    const api = new FakeDougs([rawOp({ id: 800, memo: null })]);
+    let failValidate = true;
+    api.overrides.push((req) => {
+      const body = req.body as RawOpFixture | undefined;
+      if (req.method === 'POST' && body?.validated === true && failValidate) {
+        failValidate = false;
+        return new Response('', { status: 502 });
+      }
+      return undefined;
+    });
+    const dir = tempHome();
+    const plan = join(dir, 'p.plan.json');
+    const draft = { op: '800', action: 'set' as const, set: { memo: 'note' }, why: 'x' };
+    const expectation = expectFor(toOp(api.ops.get('800')!), draft);
+    writeFileSync(
+      plan,
+      JSON.stringify(buildPlan(COMPANY, 't', [{ ...draft, expect: expectation }])),
+    );
+    const first = await runCli(api, ['apply', plan, '--yes']);
+    expect(first.code).toBe(7);
+    expect(first.json()).toMatchObject({
+      results: [
+        {
+          status: 'failed',
+          error: {
+            code: 'PARTIALLY_APPLIED',
+            hint: expect.stringContaining('dougs ops validate 800'),
+          },
+        },
+      ],
+    });
+    expect(api.ops.get('800')).toMatchObject({ validated: false, memo: 'note' });
+    const again = await runCli(api, ['apply', plan, '--yes']);
+    expect(again.code).toBe(0);
+    expect(again.json()).toMatchObject({
+      results: [{ status: 'applied', changes: [{ field: 'validated', from: false, to: true }] }],
+    });
+    expect(api.ops.get('800')!.validated).toBe(true);
+  });
+
+  it('a single command that leaves the operation open says to run dougs ops validate', async () => {
+    const api = new FakeDougs([rawOp({ id: 804 })]);
+    api.overrides.push((req) =>
+      req.method === 'POST' && (req.body as RawOpFixture).validated === true
+        ? new Response('', { status: 502 })
+        : undefined,
+    );
+    const r = await runCli(api, ['ops', 'set', '804', '--memo', 'note', '--yes']);
+    expect([r.code, r.error().code]).toEqual([6, 'PARTIALLY_APPLIED']);
+    expect(r.error().hint).toContain('dougs ops validate 804');
+  });
+
+  it('crash after the reopen, before the edit: the plan re-run edits and validates again', async () => {
+    const api = new FakeDougs([rawOp({ id: 801 })]);
+    const dir = tempHome();
+    const plan = join(dir, 'p.plan.json');
+    const draft = { op: '801', action: 'set' as const, set: { memo: 'note' }, why: 'x' };
+    writeFileSync(
+      plan,
+      JSON.stringify(
+        buildPlan(COMPANY, 't', [
+          { ...draft, expect: expectFor(toOp(api.ops.get('801')!), draft) },
+        ]),
+      ),
+    );
+    api.ops.get('801')!.validated = false; // the interrupted run reopened it, then died
+    const r = await runCli(api, ['apply', plan, '--yes']);
+    expect(r.code).toBe(0);
+    expect(r.json()).toMatchObject({
+      results: [
+        {
+          status: 'applied',
+          changes: [{ field: 'memo' }, { field: 'validated', from: false, to: true }],
+        },
+      ],
+    });
+    expect(api.ops.get('801')).toMatchObject({ validated: true, memo: 'note' });
+  });
+
+  it('an operation left open on purpose (category set, exemption impossible) is reported with the validate hint', async () => {
+    const api = new FakeDougs([rawOp({ id: 802, category: 'ads', amount: 120 })]);
+    api.onUpdate = (_prev, next) => {
+      for (const b of next.breakdowns) b.associations = [{ name: 'supplier', slots: {} }];
+    };
+    const r = await runCli(api, [
+      'ops',
+      'set',
+      '802',
+      '--category',
+      '77',
+      '--vat-exempt',
+      'outside-eu',
+      '--yes',
+    ]);
+    expect(r.code).toBe(5);
+    expect(r.error()).toMatchObject({
+      code: 'PARTIALLY_APPLIED',
+      hint: expect.stringContaining('dougs ops validate 802'),
+    });
+  });
+
+  it('operations that were not validated at plan time are left as they are', async () => {
+    const api = new FakeDougs([rawOp({ id: 803, validated: false })]);
+    expect((await runCli(api, ['ops', 'set', '803', '--memo', 'x', '--yes'])).code).toBe(0);
+    expect(api.ops.get('803')!.validated).toBe(false);
+  });
+});
+
+describe('customer refunds (N2)', () => {
+  it('a refund paid back to a customer is a sales line and gets the inbound value', async () => {
+    // Synthetic shape (no real instance seen yet): expense direction, isRefund, sales category.
+    const api = new FakeDougs([
+      rawOp({
+        id: 900,
+        category: 'sales',
+        refund: true,
+        amount: 120,
+        vatRate: 20,
+        validated: false,
+      }),
+    ]);
+    expect(
+      (await runCli(api, ['ops', 'set', '900', '--vat-exempt', 'outside-eu', '--yes'])).code,
+    ).toBe(0);
+    expect(api.ops.get('900')!.breakdowns[0]!.associationData.vatExemptionReason).toBe(
+      'exemption:inbound:outsideEuropeanUnion',
+    );
+    const noDoc = await runCli(api, [
+      'ops',
+      'set',
+      '900',
+      '--vat-exempt',
+      'no-document',
+      '--dry-run',
+    ]);
+    expect(noDoc.error().code).toBe('SALES_EXEMPTION_UNSUPPORTED');
   });
 });

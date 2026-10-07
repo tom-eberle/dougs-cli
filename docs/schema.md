@@ -141,7 +141,7 @@ vatAmount, reverseCharge, totals, currency }`.
 | `set` | Any of `category` (id), `vatRate` (percent), `vatExempt` (`outside-eu`/`inside-eu`/`outside-eu-not-imported`/`not-applicable`/`no-document`; on sales lines only the first three and `not-applicable`), `memo` (string or null). `vatRate` and `vatExempt` are exclusive |
 | `breakdown` | Optional breakdown id, required for split operations |
 | `file`, `name` | Attach: path relative to the plan file; display name defaults to the file name without a leading `<digits>_`. Only `.pdf .png .jpg .jpeg .heic .webp`, inside the plan's directory or the current directory (symlinks resolved) unless `apply --allow-any-path` |
-| `expect` | State seen when planning (`category` with `-1` for uncategorized, `vatRate`, `vatAmount`, `vatExemptReason`, `memo`, `validated`, `attachments` count). If it changed, `apply` skips the step unless `--force` |
+| `expect` | State seen when planning (`category` with `-1` for uncategorized, `vatRate`, `vatAmount`, `vatExemptReason`, `memo`, `validated`, `attachments` count). If it changed, `apply` reports a `conflict` (exit 7) unless `--force`. For set/detach, `validated` is recorded so an operation validated at plan time ends validated again, even after an interrupted run |
 | `why` | Required; shown on review |
 
 ## `apply-report` (`dougs apply`, `dougs ops set|attach|detach|validate`)
@@ -175,7 +175,8 @@ did not ask for.
 
 - `vat check` and `rules apply` also return `notPlannable: [{ op, action, code, reason }]`: fixes
   left out of the plan because apply would refuse them (`LOCKED`, `FILED_PERIOD`,
-  `EXEMPTION_UNAVAILABLE`, …), counted in `meta.notPlannable`.
+  `EXEMPTION_UNAVAILABLE`, …), counted in `meta.notPlannable`. That count includes the
+  `FILED_PERIOD` refusals, which `meta.heldBackFiledPeriods` also reports on their own.
 - `category` (`categories list`) includes `carriesVat` (false for categories outside VAT),
   `accountingNumbers` and `needsDocument` (false for transfers, capital, loans, subsidies, FX
   and tax settlements; `MISSING_RECEIPT` skips them unless `--strict`).

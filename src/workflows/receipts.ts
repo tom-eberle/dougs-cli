@@ -303,8 +303,27 @@ export function matchReceipts(
     const pinnedId = prefixedOpId(doc.name);
     const pinned = pinnedId ? options.byId?.get(pinnedId) : undefined;
     if (pinned) {
+      // Sanity check: digits that happen to be an operation id (e.g. a "20260815_" date
+      // prefix) must not pin a document whose amount and date both disagree.
+      const check = scoreMatch(doc, pinned);
+      const agrees = check.amount > 0 || (doc.dates.length > 0 && check.date > 0);
       if (hasDocument(pinned, doc.name))
         report.alreadyAttached.push({ file: doc.path, op: pinned.id });
+      else if (!agrees)
+        report.ambiguous.push({
+          file: doc.path,
+          candidates: [
+            {
+              op: pinned.id,
+              date: pinned.date,
+              wording: pinned.wording,
+              amount: pinned.amount,
+              score: check.total,
+              why: `file name prefix is operation ${pinned.id}, but neither its amount nor its date matches`,
+            },
+          ],
+          reason: `file name prefix ${pinned.id} is an operation whose amount and date don't match this document`,
+        });
       else if (pinned.attachments.length && !options.includeAttached) documented(doc, pinned, 1);
       else
         attach(

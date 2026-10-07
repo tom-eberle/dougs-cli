@@ -108,10 +108,13 @@ export function expectFor(op: Operation, step: StepShape): Expectation {
     case 'validate':
       return { validated: all.validated };
     case 'attach':
-    case 'detach':
       return {};
+    // set and detach record whether the operation was validated: if an interrupted run
+    // leaves it open after reopening, a re-run knows to validate it again.
+    case 'detach':
+      return { validated: all.validated };
     case 'set': {
-      const e: Expectation = { category: all.category };
+      const e: Expectation = { category: all.category, validated: all.validated };
       if (step.set.vatRate !== undefined || step.set.vatExempt !== undefined) {
         e.vatRate = all.vatRate;
         e.vatAmount = all.vatAmount;
@@ -200,11 +203,14 @@ function targetValues(
     case 'validate':
       return { validated: [true] };
     case 'attach':
-    case 'detach':
       return {};
+    // validated is recorded for set/detach to restore it, never to detect drift:
+    // reopening is part of the step, and validating meanwhile is fine.
+    case 'detach':
+      return { validated: [true, false] };
     case 'set': {
       const s = step.set;
-      const t: Partial<Record<keyof Expectation, unknown[]>> = {};
+      const t: Partial<Record<keyof Expectation, unknown[]>> = { validated: [true, false] };
       if (s.category !== undefined) t.category = [s.category];
       if (s.memo !== undefined) t.memo = [s.memo];
       if (s.vatExempt !== undefined) {

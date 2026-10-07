@@ -343,8 +343,27 @@ export async function executeStep(
   };
   const { raw, op } = await dougs.getOperation(step.op);
   const result = { ...base, operation: summary(op), changes: describeChanges(op, step) };
-  if (isSatisfied(op, step))
-    return { ...result, changes: [], status: 'skipped', reason: 'already satisfied' };
+  // Dougs treats validated operations as read-only (web app: isReadOnly = validated
+  // || locked). Like its editor, set/detach reopen them, edit, then validate again.
+  // An operation validated when the plan was made must end validated, even if an
+  // earlier, interrupted run left it open.
+  const reopenable = step.action === 'set' || step.action === 'detach';
+  const mustEndValidated = reopenable && (op.validated || step.expect?.validated === true);
+  const leftOpen = mustEndValidated && !op.validated;
+  const revalidated = { field: 'validated', from: false, to: true };
+  if (isSatisfied(op, step)) {
+    if (!leftOpen)
+      return { ...result, changes: [], status: 'skipped', reason: 'already satisfied' };
+    guard(raw, op, step, options);
+    const finish = {
+      ...result,
+      changes: [revalidated],
+      reason: 'edit already done; validating the operation again',
+    };
+    if (options.dryRun) return { ...finish, status: 'planned' };
+    await validateAgain(dougs, step.op);
+    return { ...finish, status: 'applied' };
+  }
   guard(raw, op, step, options);
   const drift = driftedFields(op, step);
   if (drift.length && !options.force)
@@ -353,21 +372,20 @@ export async function executeStep(
       status: 'conflict',
       reason: `operation changed since the plan was made (${drift.join(', ')}); review it or re-run with --force`,
     };
-  // Dougs treats validated operations as read-only (web app: isReadOnly = validated
-  // || locked). Like its editor, un-validate first, edit, then validate again.
-  const revalidate = op.validated && (step.action === 'set' || step.action === 'detach');
-  if (revalidate)
+  const reopen = reopenable && op.validated;
+  if (reopen)
     result.changes = [
       { field: 'validated', from: true, to: false },
       ...result.changes,
-      { field: 'validated', from: false, to: true },
+      revalidated,
     ];
+  else if (leftOpen) result.changes = [...result.changes, revalidated];
   if (options.dryRun) return { ...result, status: 'planned' };
 
   const before = snapshot(op);
   try {
     let current = raw;
-    if (revalidate) current = await unvalidate(dougs, raw);
+    if (reopen) current = await unvalidate(dougs, raw);
     if (step.action === 'attach') {
       // Read the exact bytes that were checked (no path re-read later: TOCTOU-safe).
       const upload = await readUpload(step.file, policy);
@@ -377,12 +395,12 @@ export async function executeStep(
     } else if (step.action === 'detach') await dougs.detachAttachment(step.op, step.attachmentId);
     else if (step.action === 'validate') await dougs.updateOperation({ ...raw, validated: true });
     else await applySet(dougs, current, op, step);
-    if (revalidate) await validateAgain(dougs, step.op);
+    if (mustEndValidated) await validateAgain(dougs, step.op);
   } catch (error) {
     // Report what actually changed, so the audit log never claims "nothing" wrongly.
     let now = await dougs.getOperation(step.op).catch(() => null);
     // If only the un-validation stuck, put the validation back (best effort).
-    if (revalidate && now && !now.op.validated) {
+    if (reopen && now && !now.op.validated) {
       const only = snapshotDiff(before, snapshot(now.op));
       if (only.length === 1 && only[0]!.field === 'validated') {
         await dougs.updateOperation({ ...now.raw, validated: true }).catch(() => undefined);
@@ -391,12 +409,19 @@ export async function executeStep(
     }
     const left = now ? snapshotDiff(before, snapshot(now.op)) : [];
     const e = toDougsError(error);
-    if (!left.length) throw e;
+    if (!left.length && !(leftOpen && now && !now.op.validated)) throw e;
+    const open = mustEndValidated && !!now && !now.op.validated;
     throw new StepError(
-      new DougsError('PARTIALLY_APPLIED', `${e.message} (some changes were saved)`, {
-        exitCode: e.exitCode,
-        hint: e.hint,
-      }),
+      new DougsError(
+        'PARTIALLY_APPLIED',
+        `${e.message} (some changes were saved${open ? '; the operation was left open' : ''})`,
+        {
+          exitCode: e.exitCode,
+          hint: open
+            ? `the operation is open (not validated): run dougs ops validate ${step.op} once it looks right (re-running the same plan file also finishes it)`
+            : e.hint,
+        },
+      ),
       left,
     );
   }
@@ -413,7 +438,9 @@ export async function executeStep(
       ),
       snapshotDiff(before, snapshot(after)),
     );
-  const sideEffects = snapshotDiff(before, snapshot(after), expectedKeys(op, step));
+  const expected = expectedKeys(op, step);
+  if (mustEndValidated) expected.add('validated');
+  const sideEffects = snapshotDiff(before, snapshot(after), expected);
   return { ...result, status: 'applied', ...(sideEffects.length ? { sideEffects } : {}) };
 }
 

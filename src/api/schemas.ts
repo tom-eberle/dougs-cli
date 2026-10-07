@@ -269,7 +269,7 @@ export const breakdownSchema = z.object({
     .string()
     .nullable()
     .describe(
-      'Purchases: outside-eu | inside-eu | outside-eu-not-imported | not-applicable | no-document; other values (e.g. sales exemptions) are the raw Dougs value',
+      'outside-eu | inside-eu | outside-eu-not-imported | not-applicable | no-document. The same short names cover purchase (outbound) and sales (inbound) reasons; which one is meant follows from the line (direction and isRefund). Unknown Dougs values are passed through raw.',
     ),
 });
 export type Breakdown = z.infer<typeof breakdownSchema>;
