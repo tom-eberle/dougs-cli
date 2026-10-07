@@ -1,5 +1,11 @@
 # dougs-cli
 
+[![CI](https://github.com/tom-eberle/dougs-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/tom-eberle/dougs-cli/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/dougs-cli)](https://www.npmjs.com/package/dougs-cli)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/tom-eberle/dougs-cli/blob/main/LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.13-brightgreen)](https://nodejs.org)
+[![Unofficial](https://img.shields.io/badge/Dougs-unofficial-lightgrey)](#is-it-safe)
+
 **Hand your Dougs bookkeeping chores to your AI agent — receipts, VAT fixes, categorisation and
 pre-filing checks — while you just approve.**
 

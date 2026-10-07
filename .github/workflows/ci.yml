@@ -1,10 +1,23 @@
 name: CI
 on: [push, pull_request]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} · Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
+        # macOS covers the Keychain and browser-cookie code paths. Windows is left out:
+        # see docs/DECISIONS.md.
+        os: [ubuntu-latest, macos-latest]
         node: [22, 24]
     steps:
       - uses: actions/checkout@v4
@@ -13,4 +26,4 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
-      - run: npm run lint && npm run typecheck && npm test && npm run build
+      - run: npm run check

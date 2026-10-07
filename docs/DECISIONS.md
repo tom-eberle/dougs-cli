@@ -207,6 +207,13 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
 
 ## Housekeeping
 
+- CI runs `npm run check` on Ubuntu and macOS with Node 22 and 24 (macOS exercises the Keychain
+  and browser-cookie code). Windows is not in the matrix: the suite asserts POSIX behaviour that
+  Windows does not have (0600/0700 file modes, symlink and `O_NOFOLLOW` checks on plan
+  attachments), the Keychain and cookie readers are macOS/Linux code, and the tool has not been
+  tried there. Windows users get `--with-token` and the config-file store; adding it to CI needs
+  those tests split by platform first.
+
 - The User-Agent and package metadata point to the GitHub repository (created before publishing).
 - FakeDougs marks each modelled server behaviour as OBSERVED or ASSUMED; tests against assumed
   behaviour are not evidence of how Dougs behaves.
