@@ -41,6 +41,7 @@
     "format": "biome check --write .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "diagrams": "node docs/diagrams/build.mjs",
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "prepublishOnly": "npm run check"
   },

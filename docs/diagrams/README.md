@@ -10,19 +10,18 @@ sources. Labels are generic: never put real company data in them.
 | `safety-loop.json` | `workflow` | `safety-loop-{light,dark}.png` |
 | `write-sequence.json` | `sequence` | `write-sequence-{light,dark}.png` |
 
-To change one:
+To change one, edit its source and re-render:
 
-1. Clone archify anywhere outside this repo (nothing to install; it needs Node and a Chrome-based
-   browser for its checks, overridable with `ARCHIFY_CHROME=<path>`).
-2. Edit the source, then render and check it:
+```sh
+git clone https://github.com/tt-a1i/archify /tmp/archify     # anywhere outside this repo; nothing to install
+npm install --no-save playwright-core
+ARCHIFY_DIR=/tmp/archify/archify CHROME=<chromium binary> npm run diagrams -- safety-loop
+pngquant --quality 85-98 --ext .png --force docs/images/*.png
+```
 
-   ```sh
-   node <archify>/bin/archify.mjs finalize <type> docs/diagrams/<name>.json /tmp/<name>.html --quality showcase
-   ```
-
-3. Open `/tmp/<name>.html?theme=light` and `?theme=dark`, export each as PNG from the viewer's
-   Export menu, and save them as `docs/images/<name>-light.png` and `<name>-dark.png`, resized to
-   half the exported width (archify exports at 4x; the README uses 2x).
+`build.mjs` runs archify's `finalize` (schema, layout and browser checks, failing on any warning),
+then exports a light and a dark PNG through archify's own exporter, trimmed to the drawn content
+and at 2x. Without `CHROME` it uses Playwright's Chromium (`npx playwright-core install chromium`).
 
 The README links the images by absolute `raw.githubusercontent.com` URLs so they also show on
 npmjs.com, which may ignore `<picture>`: the light PNG is the fallback and has an opaque
