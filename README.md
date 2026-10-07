@@ -15,8 +15,8 @@ for your yes before anything changes.
 
 - **Missing receipts, found and attached.** Your agent collects the invoices from your mailbox or
   supplier sites and attaches each one to the right bank line.
-- **VAT fixed where Dougs gets it wrong**, typically foreign software subscriptions booked with
-  French VAT when they should be reverse charge.
+- **VAT put right on tricky cases**, typically foreign software subscriptions booked with French
+  VAT when they fall under reverse charge.
 - **Your VAT return checked before you file it**, overdue returns and missing documents flagged,
   and the year-end checklist done in minutes instead of an afternoon.
 
@@ -58,7 +58,7 @@ on how many operations you have.*
 | Job | What your agent does | What you decide | Typical time, by hand → with agent |
 |---|---|---|---|
 | Find missing receipts (inbox, supplier sites) | Collects the PDFs, matches each to its bank line | Approve the list; nothing is uploaded before | ~1 h → ~10 min for about 20 receipts |
-| Fix VAT on foreign software subscriptions | Spots reverse charge Dougs missed, proposes the fix | Approve the fixes | ~45 min → ~5 min for about 10 |
+| Fix VAT on foreign software subscriptions | Spots reverse charge booked as French VAT, proposes the fix | Approve the fixes | ~45 min → ~5 min for about 10 |
 | Sort recurring expenses | Writes your own rules, applies them every month | Approve the rules once, then each month's list | ~30 min → ~2 min a month |
 | Check the VAT return before filing | Compares it with your books, box by box | File it in Dougs yourself | ~45 min → ~5 min a return |
 | Spot overdue returns and missing documents | Lists them, oldest first, with due dates | Decide what to do, or ask your accountant | ~20 min → ~1 min |
@@ -85,7 +85,7 @@ Copy, paste and change the month. Your agent understands English and French.
 | "What needs attention in my Dougs books?" | « Qu'est-ce qui demande mon attention dans ma compta Dougs ? » | Overdue VAT returns first, then missing receipts, uncategorised expenses and VAT to check, in plain words. |
 | "Update my Dougs books for September: receipts, VAT and categories." | « Mets à jour ma compta Dougs de septembre : justificatifs, TVA et catégories. » | One list of proposed changes for the month, each with its reason, applied after your OK. |
 | "Find the invoices for my September expenses in my email and attach them in Dougs." | « Retrouve dans mes mails les factures de mes dépenses de septembre et joins-les dans Dougs. » | Invoices matched to their bank lines and uploaded once you approve. Your agent needs access to your mailbox. |
-| "Check the VAT on my foreign software subscriptions and fix what Dougs got wrong." | « Vérifie la TVA de mes abonnements logiciels étrangers et corrige ce que Dougs a mal saisi. » | The subscriptions booked with French VAT that should be reverse charge, with the fix for each. |
+| "Check the VAT on my foreign software subscriptions and fix what needs fixing." | « Vérifie la TVA de mes abonnements logiciels étrangers et corrige ce qui doit l'être. » | The subscriptions booked with French VAT that should be reverse charge, with the fix for each. |
 | "Before I file, compare my September VAT return with my books." | « Avant que je la dépose, compare ma déclaration de TVA de septembre avec ma compta. » | A box-by-box comparison with Dougs' draft, and what explains any gap. |
 | "Do I have overdue VAT returns or missing documents?" | « Est-ce que j'ai des déclarations de TVA en retard ou des justificatifs manquants ? » | Deadlines first, with due dates, then the documents to find. |
 | "Set up rules so my recurring subscriptions are always categorised the same way." | « Crée des règles pour que mes abonnements récurrents soient toujours classés pareil. » | Rules based on your history, applied to new expenses each month after your OK. |
@@ -289,7 +289,7 @@ dougs vat check --from 2026-01-01 --plan vat.plan.json
 ```
 
 Rules: TTC ≠ HT + VAT; rates other than 0/2.1/5.5/10/20 %; **reverse-charge suspects** — a
-foreign supplier booked with deductible French VAT (Dougs regularly does this for US SaaS);
+foreign supplier booked with deductible French VAT (common with US software subscriptions);
 exemptions recorded with the wrong zone; zero VAT without an exemption reason; invoice VAT that
 differs from the booked VAT.
 

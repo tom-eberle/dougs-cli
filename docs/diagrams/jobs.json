@@ -49,7 +49,7 @@
       "id": "saas-0",
       "type": "external",
       "label": "Fix foreign software VAT",
-      "sublabel": "reverse charge Dougs often misses",
+      "sublabel": "reverse charge, often booked as French VAT",
       "pos": [40, 154],
       "size": [220, 64]
     },
