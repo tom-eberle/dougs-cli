@@ -1,18 +1,137 @@
 # dougs-cli
 
-**An unofficial command-line client for [Dougs](https://www.dougs.fr), the French online
-accounting platform — for humans and AI agents.**
+**Hand your Dougs bookkeeping chores to your AI agent — receipts, VAT fixes, categorisation and
+pre-filing checks — while you just approve.**
 
-It turns the bookkeeping chores that take hours in the web UI — matching receipts, fixing VAT,
-categorising, pre-closing checks — into commands that take minutes, with every bulk change
-proposed as a reviewable plan first.
+[Dougs](https://www.dougs.fr) is the French online accounting platform. dougs-cli lets the AI
+agent you already use (Claude Code, Codex, Cursor…) work in your Dougs books for you, and asks
+for your yes before anything changes.
 
-> [!IMPORTANT]
-> **Not affiliated with, endorsed by or supported by Dougs.** dougs-cli uses the same private
-> HTTP API as the Dougs web app, with your own session. That API is undocumented and may change
-> at any time; `dougs doctor` tells you when it has. You remain responsible for your accounts:
-> review plans before applying them, and keep your accountant in the loop. Nothing here is tax
-> advice, and the CLI never files anything with the tax administration.
+- **Missing receipts, found and attached.** Your agent collects the invoices from your mailbox or
+  supplier sites and attaches each one to the right bank line.
+- **VAT fixed where Dougs gets it wrong**, typically foreign software subscriptions booked with
+  French VAT when they should be reverse charge.
+- **Your VAT return checked before you file it**, overdue returns and missing documents flagged,
+  and the year-end checklist done in minutes instead of an afternoon.
+
+> In a first real session on a small company's books, it found 3 overdue VAT returns, attached
+> 22 missing invoices and fixed 30+ VAT and category errors, each batch reviewed by the owner
+> before it was applied.
+
+## Get started
+
+1. **Install** it (you need [Node.js](https://nodejs.org) 22.13 or newer):
+   ```sh
+   npm install -g dougs-cli
+   ```
+2. **Log in** with your Dougs email and password (and your 2FA code, if you use one):
+   ```sh
+   dougs login
+   ```
+3. **Ask your agent** (Claude Code, Codex, Cursor or any agent that can run commands):
+   > Read the dougs skill and tell me what needs attention in my books.
+
+Your agent reads the skill with `dougs skill`, looks at your books and reports back. It proposes
+changes and waits for your approval before touching anything.
+
+*Unofficial: not affiliated with or endorsed by Dougs. See [Is it safe?](#is-it-safe).*
+
+## Jobs you can hand to your agent
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/jobs-dark.png">
+  <img alt="Seven jobs: find missing receipts, fix foreign software VAT, sort recurring expenses, check the VAT return, spot what is overdue, run the year-end checklist, answer money questions. For each, what the agent does, what you decide, and the typical time by hand versus with the agent." src="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/jobs-light.png">
+</picture>
+
+*Typical times for a small company, by hand vs with your agent. They are approximate and depend
+on how many operations you have.*
+
+<details>
+<summary>The same, as text</summary>
+
+| Job | What your agent does | What you decide | Typical time, by hand → with agent |
+|---|---|---|---|
+| Find missing receipts (inbox, supplier sites) | Collects the PDFs, matches each to its bank line | Approve the list; nothing is uploaded before | ~1 h → ~10 min for about 20 receipts |
+| Fix VAT on foreign software subscriptions | Spots reverse charge Dougs missed, proposes the fix | Approve the fixes | ~45 min → ~5 min for about 10 |
+| Sort recurring expenses | Writes your own rules, applies them every month | Approve the rules once, then each month's list | ~30 min → ~2 min a month |
+| Check the VAT return before filing | Compares it with your books, box by box | File it in Dougs yourself | ~45 min → ~5 min a return |
+| Spot overdue returns and missing documents | Lists them, oldest first, with due dates | Decide what to do, or ask your accountant | ~20 min → ~1 min |
+| Year-end checklist | Runs every check: duplicates, totals, VAT, receipts | Fix or explain, with your accountant | ~½ day → ~30 min |
+| Answer questions ("ads spend this quarter?") | Exports and adds up, shows the lines behind it | Check the answer | ~20 min → ~1 min |
+
+</details>
+
+## Before and after
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/before-after-dark.png">
+  <img alt="Before: open each operation, hunt invoices in email, fix VAT line by line, recheck the VAT return, which takes hours. After: ask your agent, it gathers and checks, you review one list and approve, which takes minutes of your time." src="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/before-after-light.png">
+</picture>
+
+*Same books, same checks. Your agent does the legwork; you make the decisions.*
+
+## Things you can ask your agent
+
+Copy, paste and change the month. Your agent understands English and French.
+
+| Ask | Demandez | What you get |
+|---|---|---|
+| "What needs attention in my Dougs books?" | « Qu'est-ce qui demande mon attention dans ma compta Dougs ? » | Overdue VAT returns first, then missing receipts, uncategorised expenses and VAT to check, in plain words. |
+| "Update my Dougs books for September: receipts, VAT and categories." | « Mets à jour ma compta Dougs de septembre : justificatifs, TVA et catégories. » | One list of proposed changes for the month, each with its reason, applied after your OK. |
+| "Find the invoices for my September expenses in my email and attach them in Dougs." | « Retrouve dans mes mails les factures de mes dépenses de septembre et joins-les dans Dougs. » | Invoices matched to their bank lines and uploaded once you approve. Your agent needs access to your mailbox. |
+| "Check the VAT on my foreign software subscriptions and fix what Dougs got wrong." | « Vérifie la TVA de mes abonnements logiciels étrangers et corrige ce que Dougs a mal saisi. » | The subscriptions booked with French VAT that should be reverse charge, with the fix for each. |
+| "Before I file, compare my September VAT return with my books." | « Avant que je la dépose, compare ma déclaration de TVA de septembre avec ma compta. » | A box-by-box comparison with Dougs' draft, and what explains any gap. |
+| "Do I have overdue VAT returns or missing documents?" | « Est-ce que j'ai des déclarations de TVA en retard ou des justificatifs manquants ? » | Deadlines first, with due dates, then the documents to find. |
+| "Set up rules so my recurring subscriptions are always categorised the same way." | « Crée des règles pour que mes abonnements récurrents soient toujours classés pareil. » | Rules based on your history, applied to new expenses each month after your OK. |
+| "Which expenses over 150 € still have no invoice?" | « Quelles dépenses de plus de 150 € n'ont toujours pas de facture ? » | The list to chase: above 150 € a full invoice is expected, not just a till receipt. |
+| "How much did I spend on advertising this quarter?" | « Combien j'ai dépensé en publicité ce trimestre ? » | A total, with the operations behind it. |
+| "Run the year-end checklist for 2026." | « Fais la check-list de clôture de l'exercice 2026. » | Missing receipts, possible duplicates, VAT doubts and documents whose totals don't match, before closing. |
+
+## Your month, step by step
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/monthly-routine-dark.png">
+  <img alt="Your agent finds what needs attention, gathers receipts, fixes VAT and sorts expenses; you approve, which is the only way changes reach Dougs; your agent checks the VAT return; you file it in Dougs." src="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/monthly-routine-light.png">
+</picture>
+
+*The agent prepares everything. Nothing reaches Dougs until you approve, and you still file the
+VAT return yourself.*
+
+## Is it safe?
+
+- **Nothing changes without your approval.** Your agent first shows you the list of changes, each
+  with its reason. Dougs is only touched after you say yes. Looking is always safe.
+- **Locked or already-declared months are never touched.** Operations in a month whose VAT return
+  is filed, or in a closed year, are left alone unless you explicitly ask.
+- **Everything is checked and logged.** After each change, dougs-cli reads the operation back to
+  make sure it is right, and keeps a report of what changed.
+- **Your password stays yours.** It goes only to Dougs and is never stored, and your agent never
+  sees it.
+
+**What it does not do**
+
+- It does not file your VAT return: you file it in Dougs, as today.
+- It does not replace your accountant's judgement. Its findings are suggestions; ask your
+  accountant when in doubt. Nothing here is tax advice.
+- It is unofficial: not affiliated with, endorsed or supported by Dougs. It uses the same private
+  interface as the Dougs web app, which can change at any time; `dougs doctor` tells you when it
+  has.
+
+---
+
+## How it works
+
+dougs-cli is a command-line program that runs on your computer and talks to Dougs with your own
+session, exactly like the web app does. Your agent runs its commands; so can you.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/architecture-dark.png">
+  <img alt="dougs-cli runs on your computer: workflows read from Dougs, the plan engine writes through the same API client, using the session you logged in with" src="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/architecture-light.png">
+</picture>
+
+*Everything runs locally: workflows only read, every write goes through the plan engine, and your session is kept in your OS credential store when there is one.*
+
+When your agent asks what needs attention, it runs `dougs todo` and gets this (in JSON):
 
 ```text
 $ dougs todo
@@ -27,23 +146,7 @@ VAT to check (1)
 5 items need attention: 3 missing receipts · 1 uncategorized · 1 VAT to check
 ```
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/architecture-dark.png">
-  <img alt="dougs-cli runs on your computer: workflows read from Dougs, the plan engine writes through the same API client, using the session you logged in with" src="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/architecture-light.png">
-</picture>
-
-*Everything runs locally: workflows only read, every write goes through the plan engine, and your session is kept in your OS credential store when there is one.*
-
-## Install
-
-Requires **Node.js 22.13 or newer**.
-
-```sh
-npm install -g dougs-cli
-dougs --version
-```
-
-## 60-second quickstart
+### Command-line quickstart
 
 ```sh
 # 1. Log in with your Dougs email and password (and your 2FA code, if you use one).
@@ -86,14 +189,7 @@ anything, for scripts and agents to call before long runs. `dougs logout` forget
 (if the store is locked it says the session is still there and exits 1); `dougs logout --remote`
 also ends it on Dougs.
 
-## Workflows
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/monthly-routine-dark.png">
-  <img alt="The monthly routine: dougs todo, receipts match, vat check, rules apply, dougs apply, vat summary, then file the VAT return in Dougs" src="https://raw.githubusercontent.com/tom-eberle/dougs-cli/main/docs/images/monthly-routine-light.png">
-</picture>
-
-*A typical month: find what is missing, propose fixes as plans, apply them, then check the VAT figures before filing in Dougs.*
+## Workflows in detail
 
 Every workflow that changes data works the same way: **propose → review → apply**.
 
@@ -264,6 +360,7 @@ findings; counts are in the JSON `meta`.
 | `dougs categories list`, `dougs accounts list` | Reference data |
 | `dougs export` | Flat CSV/JSON/JSONL export (date, wording, amounts, VAT, category, receipt, id) |
 | `dougs api <METHOD> <path>` | Any endpoint, authenticated, `{company}` substituted (like `gh api`) |
+| `dougs skill` | The guide for AI agents ([skills/dougs/SKILL.md](skills/dougs/SKILL.md)); `--path` prints its location |
 | `dougs commands --json`, `dougs schema <type>` | Machine-readable command tree and JSON Schemas |
 | `dougs doctor` | Auth, reachability and API-shape drift check |
 
@@ -292,13 +389,15 @@ Run `dougs <command> --help` for flags and examples.
 
 Full contracts: [docs/schema.md](docs/schema.md).
 
-## Using it from an AI agent
+## Driving it from an agent: the details
 
 dougs-cli is designed to be driven by agents: stable JSON, self-description, and mutations that
 go through plans a human can review.
 
-- Point your agent at [`skills/dougs/SKILL.md`](skills/dougs/SKILL.md) (an agent skill with
-  recipes and guard-rails) and [AGENTS.md](AGENTS.md).
+- Point your agent at the skill: `dougs skill` prints it (recipes, guard-rails, how to talk to a
+  non-technical user), `dougs skill --path` says where it is. In Claude Code you can install it
+  as a skill: `mkdir -p ~/.claude/skills/dougs && cp "$(dougs skill --path)" ~/.claude/skills/dougs/`.
+  See also [AGENTS.md](AGENTS.md).
 - `dougs commands --json` lists every command, flag and example; `dougs schema <type>` gives JSON
   Schemas for outputs and plan files.
 - In CI or sandboxes, pass the session with `DOUGS_SESSION` and the company with `DOUGS_COMPANY`.
@@ -334,7 +433,7 @@ and retries.
   before it is printed, and `export --format csv` neutralizes cells that a spreadsheet would run
   as formulas.
 
-## Development
+## For developers
 
 ```sh
 npm install

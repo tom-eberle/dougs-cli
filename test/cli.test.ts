@@ -404,3 +404,16 @@ describe('self-description', () => {
     });
   });
 });
+
+describe('dougs skill', () => {
+  it('prints the agent guide as Markdown, or its location', async () => {
+    const r = await runCli(sample(), ['skill']);
+    expect(r.code).toBe(0);
+    expect(r.stdout.startsWith('---\nname: dougs\n')).toBe(true);
+    expect(r.stdout).toContain('## Working with the user');
+    const path = await runCli(sample(), ['skill', '--path']);
+    expect(path.stdout.trim()).toMatch(/skills\/dougs\/SKILL\.md$/);
+    const json = await runCli(sample(), ['skill', '--path', '--json']);
+    expect(json.json()).toEqual({ path: path.stdout.trim() });
+  });
+});

@@ -5,7 +5,8 @@ Guidance for AI agents — both agents **using** dougs-cli to do bookkeeping, an
 
 ## Using dougs-cli
 
-Read [`skills/dougs/SKILL.md`](skills/dougs/SKILL.md) first; it has the recipes. The essentials:
+Read [`skills/dougs/SKILL.md`](skills/dougs/SKILL.md) first (`dougs skill` prints it); it has the
+recipes and how to talk to a non-technical user. The essentials:
 
 - Always pass `--json` (JSON is also the default when stdout is not a terminal). Errors are one
   JSON line on stderr: `{"error":{"code","message","hint","status"}}`. Branch on the exit code

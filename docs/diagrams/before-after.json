@@ -1,0 +1,180 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "Your monthly close, before and after",
+    "subtitle": "Same books, same checks: your agent does the legwork, you make the decisions",
+    "output": "before-after.html",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "lanes": [
+    {
+      "id": "manual",
+      "label": "By hand, in the Dougs web app"
+    },
+    {
+      "id": "agent",
+      "label": "With dougs-cli and your AI agent"
+    }
+  ],
+  "groups": [
+    {
+      "id": "you",
+      "label": "Your part",
+      "lane": "agent",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "security"
+    }
+  ],
+  "mainPath": ["agent-0", "agent-1", "agent-2", "agent-3", "agent-4"],
+  "nodes": [
+    {
+      "id": "manual-0",
+      "lane": "manual",
+      "col": 0,
+      "type": "external",
+      "label": "Open each operation",
+      "sublabel": "one by one, in the web app",
+      "width": 172
+    },
+    {
+      "id": "manual-1",
+      "lane": "manual",
+      "col": 1,
+      "type": "external",
+      "label": "Hunt invoices in email",
+      "sublabel": "download, then upload each",
+      "width": 172
+    },
+    {
+      "id": "manual-2",
+      "lane": "manual",
+      "col": 2,
+      "type": "external",
+      "label": "Fix VAT line by line",
+      "sublabel": "look up every supplier",
+      "width": 172
+    },
+    {
+      "id": "manual-3",
+      "lane": "manual",
+      "col": 3,
+      "type": "external",
+      "label": "Recheck the VAT return",
+      "sublabel": "against your own notes",
+      "width": 172
+    },
+    {
+      "id": "manual-4",
+      "lane": "manual",
+      "col": 4,
+      "type": "database",
+      "label": "Hours",
+      "sublabel": "every month",
+      "width": 172,
+      "icon": "clock"
+    },
+    {
+      "id": "agent-0",
+      "lane": "agent",
+      "col": 0,
+      "type": "backend",
+      "label": "Ask your agent",
+      "sublabel": "“update my September books”",
+      "width": 172
+    },
+    {
+      "id": "agent-1",
+      "lane": "agent",
+      "col": 1,
+      "type": "backend",
+      "label": "It gathers and checks",
+      "sublabel": "receipts, VAT, categories",
+      "width": 172
+    },
+    {
+      "id": "agent-2",
+      "lane": "agent",
+      "col": 2,
+      "type": "security",
+      "label": "You review one list",
+      "sublabel": "every change, with its reason",
+      "width": 172
+    },
+    {
+      "id": "agent-3",
+      "lane": "agent",
+      "col": 3,
+      "type": "security",
+      "label": "You approve",
+      "sublabel": "it applies and checks each one",
+      "width": 172,
+      "tag": "nothing changes before this"
+    },
+    {
+      "id": "agent-4",
+      "lane": "agent",
+      "col": 4,
+      "type": "database",
+      "label": "Minutes",
+      "sublabel": "of your time",
+      "width": 172,
+      "icon": "clock"
+    }
+  ],
+  "edges": [
+    {
+      "id": "manual-e1",
+      "from": "manual-0",
+      "to": "manual-1",
+      "variant": "default"
+    },
+    {
+      "id": "manual-e2",
+      "from": "manual-1",
+      "to": "manual-2",
+      "variant": "default"
+    },
+    {
+      "id": "manual-e3",
+      "from": "manual-2",
+      "to": "manual-3",
+      "variant": "default"
+    },
+    {
+      "id": "manual-e4",
+      "from": "manual-3",
+      "to": "manual-4",
+      "variant": "default"
+    },
+    {
+      "id": "agent-e1",
+      "from": "agent-0",
+      "to": "agent-1",
+      "variant": "emphasis"
+    },
+    {
+      "id": "agent-e2",
+      "from": "agent-1",
+      "to": "agent-2",
+      "variant": "emphasis"
+    },
+    {
+      "id": "agent-e3",
+      "from": "agent-2",
+      "to": "agent-3",
+      "variant": "emphasis"
+    },
+    {
+      "id": "agent-e4",
+      "from": "agent-3",
+      "to": "agent-4",
+      "variant": "emphasis"
+    }
+  ]
+}

@@ -2,171 +2,161 @@
   "schema_version": 2,
   "diagram_type": "workflow",
   "meta": {
-    "title": "The monthly routine",
-    "subtitle": "From a month of bank lines to a VAT return ready to file",
+    "title": "Your month, with your agent",
+    "subtitle": "From a month of bank lines to a VAT return ready to file; your approval is the only way changes reach Dougs",
     "output": "monthly-routine.html",
     "animation": "none",
     "quality_profile": "showcase",
     "legend": {
-      "entries": {
-        "backend": {
-          "label": "Read-only"
-        },
-        "messagebus": {
-          "label": "Writes a plan"
-        },
-        "security": {
-          "label": "Changes Dougs"
-        },
-        "external": {
-          "label": "You, in Dougs"
-        }
-      }
+      "mode": "hidden"
     }
   },
   "lanes": [
     {
-      "id": "books",
-      "label": "Fix the books"
+      "id": "agent",
+      "label": "Your agent"
     },
     {
-      "id": "declare",
-      "label": "Declare VAT"
+      "id": "you",
+      "label": "You"
     }
   ],
   "phases": [
     {
-      "id": "worklist",
-      "label": "Find",
+      "id": "prepare",
+      "label": "The agent prepares",
       "fromCol": 0,
-      "toCol": 0
-    },
-    {
-      "id": "fixes",
-      "label": "Propose plans",
-      "fromCol": 1,
       "toCol": 3
     },
     {
-      "id": "close",
-      "label": "Apply and file",
+      "id": "decide",
+      "label": "You decide",
       "fromCol": 4,
+      "toCol": 4,
+      "variant": "security"
+    },
+    {
+      "id": "file",
+      "label": "Check and file",
+      "fromCol": 5,
       "toCol": 5,
       "variant": "emphasis"
     }
   ],
-  "mainPath": ["todo", "receipts", "vat", "rules", "apply", "summary", "file"],
+  "groups": [
+    {
+      "id": "safety",
+      "label": "Safety point",
+      "lane": "you",
+      "fromCol": 4,
+      "toCol": 4,
+      "variant": "security"
+    }
+  ],
+  "mainPath": ["todo", "receipts", "vat", "rules", "approve", "summary", "file"],
   "nodes": [
     {
       "id": "todo",
-      "lane": "books",
+      "lane": "agent",
       "col": 0,
       "type": "backend",
-      "label": "dougs todo",
-      "sublabel": "what needs attention",
-      "width": 140
+      "label": "What needs attention?",
+      "sublabel": "dougs todo",
+      "width": 184
     },
     {
       "id": "receipts",
-      "lane": "books",
+      "lane": "agent",
       "col": 1,
-      "type": "messagebus",
-      "label": "receipts match",
-      "sublabel": "pair PDFs with bank lines",
-      "width": 140
+      "type": "backend",
+      "label": "Gather receipts",
+      "sublabel": "dougs receipts match",
+      "width": 150
     },
     {
       "id": "vat",
-      "lane": "books",
+      "lane": "agent",
       "col": 2,
-      "type": "messagebus",
-      "label": "vat check",
-      "sublabel": "rates and exemptions",
-      "width": 140
+      "type": "backend",
+      "label": "Fix VAT",
+      "sublabel": "dougs vat check",
+      "width": 150
     },
     {
       "id": "rules",
-      "lane": "books",
+      "lane": "agent",
       "col": 3,
-      "type": "messagebus",
-      "label": "rules apply",
-      "sublabel": "your recurring vendors",
-      "width": 140
+      "type": "backend",
+      "label": "Sort expenses",
+      "sublabel": "dougs rules apply",
+      "width": 150
     },
     {
-      "id": "apply",
-      "lane": "books",
+      "id": "approve",
+      "lane": "you",
       "col": 4,
       "type": "security",
-      "label": "dougs apply",
-      "sublabel": "review, then write",
-      "width": 140
+      "label": "You approve",
+      "sublabel": "dougs apply",
+      "width": 150,
+      "tag": "nothing changes before",
+      "icon": "person"
     },
     {
       "id": "summary",
-      "lane": "books",
+      "lane": "agent",
       "col": 5,
       "type": "backend",
-      "label": "vat summary",
-      "sublabel": "CA3 boxes vs Dougs",
-      "width": 140
+      "label": "Check the VAT return",
+      "sublabel": "dougs vat summary",
+      "width": 184
     },
     {
       "id": "file",
-      "lane": "declare",
+      "lane": "you",
       "col": 5,
       "type": "external",
-      "label": "File the CA3",
-      "sublabel": "in the Dougs web app",
-      "width": 140
+      "label": "You file it in Dougs",
+      "sublabel": "in the web app, as today",
+      "width": 184,
+      "icon": "person"
     }
   ],
   "edges": [
     {
-      "id": "start",
+      "id": "e1",
       "from": "todo",
       "to": "receipts"
     },
     {
-      "id": "next-vat",
+      "id": "e2",
       "from": "receipts",
       "to": "vat"
     },
     {
-      "id": "next-rules",
+      "id": "e3",
       "from": "vat",
       "to": "rules"
     },
     {
-      "id": "plans",
+      "id": "e4",
       "from": "rules",
-      "to": "apply",
-      "label": "plans",
+      "to": "approve",
+      "label": "one list of changes",
       "variant": "emphasis"
     },
     {
-      "id": "check",
-      "from": "apply",
+      "id": "e5",
+      "from": "approve",
       "to": "summary",
       "variant": "emphasis"
     },
     {
-      "id": "declare",
+      "id": "e6",
       "from": "summary",
       "to": "file",
       "label": "figures match",
       "variant": "emphasis"
-    },
-    {
-      "id": "again",
-      "from": "apply",
-      "to": "todo",
-      "label": "until todo is empty",
-      "variant": "dashed",
-      "role": "return",
-      "route": "up-channel",
-      "fromSide": "top",
-      "toSide": "top"
     }
   ]
 }

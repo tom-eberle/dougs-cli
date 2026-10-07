@@ -12,7 +12,7 @@ export const credentialSourceSchema = z.enum(['password', 'token', ...BROWSERS])
 export type CredentialSource = z.infer<typeof credentialSourceSchema>;
 
 const profileSchema = z.object({
-  /** Only when no OS credential store is available (or sessions saved before 0.1.0). */
+  /** Only when no OS credential store is available (or sessions saved by early 0.1.0 builds). */
   session: z.string().optional(),
   /** The OS store holding this profile's session, keyed by the profile name. */
   sessionStore: z.enum(['keychain', 'libsecret']).optional(),

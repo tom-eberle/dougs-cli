@@ -1,0 +1,390 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Jobs you can hand to your agent",
+    "subtitle": "Approximate times for a small company; they depend on how many operations you have",
+    "output": "jobs.html",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "hidden"
+    }
+  },
+  "components": [
+    {
+      "id": "receipts-0",
+      "type": "external",
+      "label": "Find missing receipts",
+      "sublabel": "in your inbox, on supplier sites",
+      "pos": [40, 70],
+      "size": [220, 64]
+    },
+    {
+      "id": "receipts-1",
+      "type": "backend",
+      "label": "Collects and matches PDFs",
+      "sublabel": "attaches each to its bank line",
+      "pos": [310, 70],
+      "size": [220, 64]
+    },
+    {
+      "id": "receipts-2",
+      "type": "security",
+      "label": "Approve the list",
+      "sublabel": "nothing is uploaded before",
+      "pos": [580, 70],
+      "size": [220, 64],
+      "icon": "person"
+    },
+    {
+      "id": "receipts-3",
+      "type": "database",
+      "label": "~1 h → ~10 min",
+      "sublabel": "about 20 receipts",
+      "pos": [850, 70],
+      "size": [220, 64],
+      "icon": "clock"
+    },
+    {
+      "id": "saas-0",
+      "type": "external",
+      "label": "Fix foreign software VAT",
+      "sublabel": "reverse charge Dougs often misses",
+      "pos": [40, 154],
+      "size": [220, 64]
+    },
+    {
+      "id": "saas-1",
+      "type": "backend",
+      "label": "Spots the wrong VAT",
+      "sublabel": "proposes the right treatment",
+      "pos": [310, 154],
+      "size": [220, 64]
+    },
+    {
+      "id": "saas-2",
+      "type": "security",
+      "label": "Approve the fixes",
+      "sublabel": "question any odd one",
+      "pos": [580, 154],
+      "size": [220, 64],
+      "icon": "person"
+    },
+    {
+      "id": "saas-3",
+      "type": "database",
+      "label": "~45 min → ~5 min",
+      "sublabel": "about 10 subscriptions",
+      "pos": [850, 154],
+      "size": [220, 64],
+      "icon": "clock"
+    },
+    {
+      "id": "rules-0",
+      "type": "external",
+      "label": "Sort recurring expenses",
+      "sublabel": "same vendors every month",
+      "pos": [40, 238],
+      "size": [220, 64]
+    },
+    {
+      "id": "rules-1",
+      "type": "backend",
+      "label": "Writes your own rules",
+      "sublabel": "applies them every month",
+      "pos": [310, 238],
+      "size": [220, 64]
+    },
+    {
+      "id": "rules-2",
+      "type": "security",
+      "label": "Approve the rules",
+      "sublabel": "once, then each month",
+      "pos": [580, 238],
+      "size": [220, 64],
+      "icon": "person"
+    },
+    {
+      "id": "rules-3",
+      "type": "database",
+      "label": "~30 min → ~2 min",
+      "sublabel": "each month",
+      "pos": [850, 238],
+      "size": [220, 64],
+      "icon": "clock"
+    },
+    {
+      "id": "vatreturn-0",
+      "type": "external",
+      "label": "Check the VAT return",
+      "sublabel": "before you file it",
+      "pos": [40, 322],
+      "size": [220, 64]
+    },
+    {
+      "id": "vatreturn-1",
+      "type": "backend",
+      "label": "Compares it with your books",
+      "sublabel": "box by box",
+      "pos": [310, 322],
+      "size": [220, 64]
+    },
+    {
+      "id": "vatreturn-2",
+      "type": "security",
+      "label": "File it in Dougs",
+      "sublabel": "yourself, as today",
+      "pos": [580, 322],
+      "size": [220, 64],
+      "icon": "person"
+    },
+    {
+      "id": "vatreturn-3",
+      "type": "database",
+      "label": "~45 min → ~5 min",
+      "sublabel": "each return",
+      "pos": [850, 322],
+      "size": [220, 64],
+      "icon": "clock"
+    },
+    {
+      "id": "overdue-0",
+      "type": "external",
+      "label": "Spot what is overdue",
+      "sublabel": "returns, missing documents",
+      "pos": [40, 406],
+      "size": [220, 64]
+    },
+    {
+      "id": "overdue-1",
+      "type": "backend",
+      "label": "Lists it, oldest first",
+      "sublabel": "with due dates",
+      "pos": [310, 406],
+      "size": [220, 64]
+    },
+    {
+      "id": "overdue-2",
+      "type": "security",
+      "label": "Decide what to do",
+      "sublabel": "or ask your accountant",
+      "pos": [580, 406],
+      "size": [220, 64],
+      "icon": "person"
+    },
+    {
+      "id": "overdue-3",
+      "type": "database",
+      "label": "~20 min → ~1 min",
+      "sublabel": "each check",
+      "pos": [850, 406],
+      "size": [220, 64],
+      "icon": "clock"
+    },
+    {
+      "id": "yearend-0",
+      "type": "external",
+      "label": "Run the year-end checklist",
+      "sublabel": "before closing the books",
+      "pos": [40, 490],
+      "size": [220, 64]
+    },
+    {
+      "id": "yearend-1",
+      "type": "backend",
+      "label": "Runs every check",
+      "sublabel": "duplicates, totals, VAT",
+      "pos": [310, 490],
+      "size": [220, 64]
+    },
+    {
+      "id": "yearend-2",
+      "type": "security",
+      "label": "Fix or explain",
+      "sublabel": "with your accountant",
+      "pos": [580, 490],
+      "size": [220, 64],
+      "icon": "person"
+    },
+    {
+      "id": "yearend-3",
+      "type": "database",
+      "label": "~½ day → ~30 min",
+      "sublabel": "once a year",
+      "pos": [850, 490],
+      "size": [220, 64],
+      "icon": "clock"
+    },
+    {
+      "id": "questions-0",
+      "type": "external",
+      "label": "Answer money questions",
+      "sublabel": "“ads spend this quarter?”",
+      "pos": [40, 574],
+      "size": [220, 64]
+    },
+    {
+      "id": "questions-1",
+      "type": "backend",
+      "label": "Exports and adds it up",
+      "sublabel": "shows the lines behind it",
+      "pos": [310, 574],
+      "size": [220, 64]
+    },
+    {
+      "id": "questions-2",
+      "type": "security",
+      "label": "Check the answer",
+      "sublabel": "it shows its working",
+      "pos": [580, 574],
+      "size": [220, 64],
+      "icon": "person"
+    },
+    {
+      "id": "questions-3",
+      "type": "database",
+      "label": "~20 min → ~1 min",
+      "sublabel": "each question",
+      "pos": [850, 574],
+      "size": [220, 64],
+      "icon": "clock"
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "The job",
+      "wraps": [
+        "receipts-0",
+        "saas-0",
+        "rules-0",
+        "vatreturn-0",
+        "overdue-0",
+        "yearend-0",
+        "questions-0"
+      ],
+      "pad": 16
+    },
+    {
+      "kind": "region",
+      "label": "What your agent does",
+      "wraps": [
+        "receipts-1",
+        "saas-1",
+        "rules-1",
+        "vatreturn-1",
+        "overdue-1",
+        "yearend-1",
+        "questions-1"
+      ],
+      "pad": 16
+    },
+    {
+      "kind": "region",
+      "label": "What you decide",
+      "wraps": [
+        "receipts-2",
+        "saas-2",
+        "rules-2",
+        "vatreturn-2",
+        "overdue-2",
+        "yearend-2",
+        "questions-2"
+      ],
+      "pad": 16
+    },
+    {
+      "kind": "region",
+      "label": "Typical time: by hand → with agent",
+      "wraps": [
+        "receipts-3",
+        "saas-3",
+        "rules-3",
+        "vatreturn-3",
+        "overdue-3",
+        "yearend-3",
+        "questions-3"
+      ],
+      "pad": 16
+    }
+  ],
+  "connections": [
+    {
+      "id": "receipts-a",
+      "from": "receipts-0",
+      "to": "receipts-1"
+    },
+    {
+      "id": "receipts-b",
+      "from": "receipts-1",
+      "to": "receipts-2",
+      "variant": "emphasis"
+    },
+    {
+      "id": "saas-a",
+      "from": "saas-0",
+      "to": "saas-1"
+    },
+    {
+      "id": "saas-b",
+      "from": "saas-1",
+      "to": "saas-2",
+      "variant": "emphasis"
+    },
+    {
+      "id": "rules-a",
+      "from": "rules-0",
+      "to": "rules-1"
+    },
+    {
+      "id": "rules-b",
+      "from": "rules-1",
+      "to": "rules-2",
+      "variant": "emphasis"
+    },
+    {
+      "id": "vatreturn-a",
+      "from": "vatreturn-0",
+      "to": "vatreturn-1"
+    },
+    {
+      "id": "vatreturn-b",
+      "from": "vatreturn-1",
+      "to": "vatreturn-2",
+      "variant": "emphasis"
+    },
+    {
+      "id": "overdue-a",
+      "from": "overdue-0",
+      "to": "overdue-1"
+    },
+    {
+      "id": "overdue-b",
+      "from": "overdue-1",
+      "to": "overdue-2",
+      "variant": "emphasis"
+    },
+    {
+      "id": "yearend-a",
+      "from": "yearend-0",
+      "to": "yearend-1"
+    },
+    {
+      "id": "yearend-b",
+      "from": "yearend-1",
+      "to": "yearend-2",
+      "variant": "emphasis"
+    },
+    {
+      "id": "questions-a",
+      "from": "questions-0",
+      "to": "questions-1"
+    },
+    {
+      "id": "questions-b",
+      "from": "questions-1",
+      "to": "questions-2",
+      "variant": "emphasis"
+    }
+  ]
+}

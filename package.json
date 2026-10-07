@@ -1,6 +1,6 @@
 {
   "name": "dougs-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Unofficial command-line client for the Dougs accounting platform, built for humans and AI agents",
   "keywords": [
     "dougs",

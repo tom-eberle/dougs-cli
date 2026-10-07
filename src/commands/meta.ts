@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Argument, Command, Option } from 'commander';
 import { z } from 'zod';
 import {
@@ -9,7 +12,7 @@ import {
   rawOperationSchema,
   whoamiSchema,
 } from '../api/schemas.js';
-import { usageError } from '../output/errors.js';
+import { DougsError, ExitCode, usageError } from '../output/errors.js';
 import { renderTable } from '../output/table.js';
 import { applyReportSchema, planSchema, planStepSchema } from '../plan/types.js';
 import { closeCheckSchema } from '../workflows/close-check.js';
@@ -154,7 +157,36 @@ function flatten(info: CommandInfo): CommandInfo[] {
   return [info, ...info.subcommands.flatMap(flatten)];
 }
 
+/** skills/dougs/SKILL.md, found from the built CLI (dist/) or the sources (src/commands/). */
+export function skillPath(from = dirname(fileURLToPath(import.meta.url))): string | null {
+  for (let dir = from, depth = 0; depth < 4; dir = dirname(dir), depth++) {
+    const candidate = join(dir, 'skills', 'dougs', 'SKILL.md');
+    if (existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
 export function registerMetaCommands(program: Command): void {
+  withExamples(
+    program
+      .command('skill')
+      .description('Print the guide for AI agents: what dougs can do and how to use it safely')
+      .option('--path', 'Print where the skill file is (to install it as an agent skill)'),
+    'skill',
+    'skill --path',
+  ).action((opts: { path?: boolean }, cmd: Command) => {
+    const ctx = contextOf(cmd);
+    const path = skillPath();
+    if (!path)
+      throw new DougsError('SKILL_MISSING', 'The skill file is missing from this installation', {
+        exitCode: ExitCode.unexpected,
+        hint: 'reinstall: npm install -g dougs-cli',
+      });
+    if (ctx.options.json)
+      return ctx.out.result({ path, markdown: opts.path ? undefined : readFileSync(path, 'utf8') });
+    ctx.runtime.stdout.write(opts.path ? `${path}\n` : readFileSync(path, 'utf8'));
+  });
+
   withExamples(
     program
       .command('commands')

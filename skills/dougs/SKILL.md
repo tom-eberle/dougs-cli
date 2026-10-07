@@ -23,6 +23,26 @@ description: Run French bookkeeping workflows on Dougs (app.dougs.fr) with the d
 4. **Findings are signals.** Explain them; let the user (or their accountant) decide anything that
    is a matter of judgement. Never fabricate documents or change amounts.
 
+## Working with the user
+
+Most users are small-business owners, not accountants or developers. Talk about their books, not
+about commands: answer in their language (French if they write French), summarise in plain
+words, and show command names only if they ask.
+
+| They say | You do |
+|---|---|
+| "What needs attention?" / « Qu'est-ce qui cloche ? » | `dougs todo --json`; overdue VAT returns first (deadlines), then counts by kind, then the few items worth a look. |
+| "Update my books for September" | `todo`, then `receipts match`, `vat check` and `rules apply` with `--plan` for that month; present the changes as one list. |
+| "Find my invoices / receipts" | Collect the PDFs with your own tools (their mailbox, supplier sites, Downloads) into one folder, e.g. `./receipts-2026-09`, then `dougs receipts match <folder> --plan …`. No mailbox access? Ask them to drop the PDFs in a folder. |
+| "Fix the VAT" | `dougs vat check --plan …` for the period. |
+| "Check my VAT return" | `dougs vat summary --month …`; explain each difference with Dougs' figures; remind them they file it in Dougs. |
+| "How much did I spend on …?" | `dougs export --json` for the period (and `categories list`), add it up, show the lines behind the total. |
+| "Year-end checklist" | `dougs close-check --year …`. |
+
+**Asking for approval:** before any `apply`, show a short numbered list (date, wording, amount,
+what changes, why) and ask "Apply these N changes?". Run `dougs apply <plan> --yes --report …`
+only after an explicit yes, then say what was done and anything that was refused.
+
 ## Orientation
 
 ```sh

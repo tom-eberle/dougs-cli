@@ -4,6 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.1.1] — 2026-10-07
+
+### Documentation
+- README: outcome-focused docs. What you can hand to your agent, with typical time saved;
+  prompts to copy in English and French; plain-language safety notes and what the tool does not
+  do. The technical material moved under "How it works" and "For developers".
+- New diagrams: jobs you can hand to your agent, your monthly close before and after, and your
+  month step by step with the approval point highlighted.
+
+### Added
+- `dougs skill` prints the guide for AI agents (`--path` for its location, e.g. to install it as
+  a Claude Code skill). The skill gains a "Working with the user" section: plain language,
+  common requests and how to ask for approval.
+
 ## [0.1.0] — 2026-10-07
 
 First release, **experimental**: the write path is guarded and tested against a model of the

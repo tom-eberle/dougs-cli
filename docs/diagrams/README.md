@@ -1,12 +1,15 @@
 # README diagrams
 
 The images in `docs/images/` are rendered from these [archify](https://github.com/tt-a1i/archify)
-sources. Labels are generic: never put real company data in them.
+sources. Labels are generic: never put real company data in them. The first three are for
+non-technical readers: plain words, command names at most as small secondary text.
 
 | Source | archify type | Images |
 |---|---|---|
-| `architecture.json` | `architecture` | `architecture-{light,dark}.png` |
+| `jobs.json` | `architecture` (a grid) | `jobs-{light,dark}.png` |
+| `before-after.json` | `workflow` | `before-after-{light,dark}.png` |
 | `monthly-routine.json` | `workflow` | `monthly-routine-{light,dark}.png` |
+| `architecture.json` | `architecture` | `architecture-{light,dark}.png` |
 | `safety-loop.json` | `workflow` | `safety-loop-{light,dark}.png` |
 | `write-sequence.json` | `sequence` | `write-sequence-{light,dark}.png` |
 
