@@ -133,7 +133,16 @@ dougs ops validate 10001 --yes --json
   whose invoice says "TVA non applicable, art. 293 B du CGI"; fix this when Dougs added 20 % VAT
   after a re-categorization, often reported as a side effect), `no-document` (receipt lost).
 - Actions: `set` (`category`, `vatRate` in percent, `vatExempt`, `memo`), `attach` (`file`
-  relative to the plan, optional `name`), `detach` (`attachmentId`), `validate`.
+  relative to the plan, optional `name`), `detach` (`attachmentId`), `validate`, `ventilate`.
+- `ventilate` fills an empty e-commerce ventilation (operation `type`
+  `dispatch:ecommerce:salesChannel`, one per sales channel and month) from the store's report:
+  `"ventilate": {"sales": [{"zone": "inside-eu", "amount": 100.00}, {"zone": "outside-eu",
+  "amount": 300.00}], "fees": [{"paymentsProcessorId": 11111, "amount": 50.00}], "net": 350.00,
+  "validate": true}`. `net` must be sales − fees to the cent. Processor ids: `dougs api GET
+  /companies/<id>/salesChannels`. A ventilation that already holds other figures is refused
+  (`ALREADY_VENTILATED`); lines cannot be deleted from the CLI. Dougs computes the net a few
+  seconds after the lines are written; `apply` waits for it (up to 20 s) before validating. On
+  `NOT_RECOMPUTED`, re-run the same plan a minute later.
 - Attach files must be receipts (`.pdf .png .jpg .jpeg .heic .webp`) inside the plan's directory or
   the current directory; otherwise `apply` refuses the whole plan (`UNSAFE_ATTACHMENT`, exit 2).
   Put the plan next to the documents rather than asking for `--allow-any-path`.

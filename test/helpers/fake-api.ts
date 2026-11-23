@@ -3,8 +3,10 @@ import {
   type RawOpFixture,
   rawAccounts,
   rawCategories,
+  rawSalesChannels,
   rawUser,
   recoverage,
+  ventilationBreakdown,
 } from './fixtures.js';
 
 export interface RecordedRequest {
@@ -40,6 +42,11 @@ export class FakeDougs {
   session = 'synthetic-session-value';
   overrides: Handler[] = [];
   nextAttachmentId = 900_000;
+  nextBreakdownId = 800_000;
+  salesChannels: unknown[] = rawSalesChannels();
+  /** Reads of a ventilation until Dougs' asynchronous recompute shows (Infinity: never). */
+  recomputeAfterReads = 2;
+  pendingRecompute = new Map<string, number>();
   /**
    * Password login. OBSERVED (web app code): endpoints, request bodies and the
    * authenticated / mfaRequired / ssoRequired statuses. ASSUMED: HTTP 401 for a
@@ -156,6 +163,9 @@ export class FakeDougs {
     }
     if (method === 'GET' && path === `${c}/accounts`) return Response.json(rawAccounts());
     if (method === 'GET' && path === `${c}/categories`) return Response.json(rawCategories());
+    if (method === 'GET' && path === `${c}/salesChannels`) return Response.json(this.salesChannels);
+    const sales = path.match(new RegExp(`^${c}/operations/(\\d+)/ecommerceSales(?:/(\\d+))?$`));
+    if (sales) return this.ecommerceSales(req, sales[1]!, sales[2]);
     if (method === 'GET' && path === `${c}/accounting-years`)
       return Response.json(this.accountingYears);
     if (method === 'GET' && path === `${c}/declarations/list-declarations`)
@@ -228,6 +238,7 @@ export class FakeDougs {
     const one = path.match(new RegExp(`^${c}/operations/(\\d+)$`));
     if (one && method === 'GET') {
       const op = this.ops.get(one[1]!);
+      if (op) this.tickRecompute(op);
       return op
         ? Response.json(op)
         : Response.json({ message: 'Not Found', statusCode: 404 }, { status: 404 });
@@ -301,6 +312,118 @@ export class FakeDougs {
     return notFound();
   }
 
+  /**
+   * E-commerce ventilation lines. OBSERVED (web app traffic): create with amount 0, then
+   * update by breakdown id with the line sent back; the listing groups exempt service sales
+   * under subsection `exonerateSale`. OBSERVED (live): right after the writes the operation
+   * has amount 0 and no counterpart; seconds later Dougs creates the counterpart, and both it
+   * and the amount equal sales − fees. Modelled as: the recompute lands on the
+   * `recomputeAfterReads`-th read of the operation after the last write.
+   * ASSUMED: validated operations refuse these writes with 403, like other edits.
+   */
+  private ecommerceSales(req: RecordedRequest, opId: string, breakdownId?: string): Response {
+    const op = this.ops.get(opId);
+    if (!op) return notFound();
+    const lineOf = (b: RawOpFixture['breakdowns'][number]) => {
+      const fee = b.section === 'ecommerceDispatch:fees';
+      return {
+        saleId: fee ? 'fees' : b.associationData.vatExemptionReason,
+        label: fee ? 'Fictional Pay - ' : 'Exempt zone',
+        flag: fee ? 'payment' : 'eu',
+        amount: b.amount,
+        taxRate: 0,
+        vatAmount: 0,
+        breakdownId: b.id,
+        isRefund: false,
+        ...(fee ? { paymentsProcessorId: b.associationData.paymentsProcessorId } : {}),
+      };
+    };
+    const linesIn = (section: string) =>
+      op.breakdowns.filter((b) => !b.isCounterpart && b.section === section).map(lineOf);
+    if (req.method === 'GET' && !breakdownId)
+      return Response.json({
+        salesChannelName: 'Fictional App Store',
+        totalAmount: this.salesTotal(op),
+        totalVatAmount: 0,
+        sections: [
+          {
+            sectionId: 'service',
+            subSections: [
+              { sectionId: 'service', subSectionId: 'fr', sales: [] },
+              {
+                sectionId: 'service',
+                subSectionId: 'exonerateSale',
+                sales: linesIn('ecommerceDispatch:sales:service'),
+              },
+            ],
+          },
+          {
+            sectionId: 'fees',
+            subSections: [
+              { sectionId: 'fees', subSectionId: 'fees', sales: linesIn('ecommerceDispatch:fees') },
+            ],
+          },
+          {
+            sectionId: 'ecommerceExpenses',
+            subSections: [
+              { sectionId: 'ecommerceExpenses', subSectionId: 'ecommerceExpenses', sales: [] },
+            ],
+          },
+        ],
+      });
+    if (req.method !== 'POST') return notFound();
+    if (op.validated)
+      return Response.json({ message: 'Forbidden', statusCode: 403 }, { status: 403 });
+    const sale = (req.body as { ecommerceSale?: Record<string, unknown> }).ecommerceSale;
+    if (!sale) return Response.json({ message: 'Bad Request', statusCode: 400 }, { status: 400 });
+    let b: RawOpFixture['breakdowns'][number] | undefined;
+    if (!breakdownId) {
+      const id = this.nextBreakdownId++;
+      b =
+        sale.saleId === 'fees'
+          ? ventilationBreakdown(id, {
+              kind: 'fee',
+              processor: sale.paymentsProcessorId as number,
+              amount: 0,
+            })
+          : ventilationBreakdown(id, { kind: 'sale', saleId: String(sale.saleId), amount: 0 });
+      op.breakdowns.push(b);
+    } else {
+      b = op.breakdowns.find((x) => String(x.id) === breakdownId && !x.isCounterpart);
+      if (!b) return notFound();
+      b.amount = sale.amount as number;
+      b.amountExcludingTaxesWithRecoverageRate = b.amount;
+    }
+    op.breakdowns = op.breakdowns.filter((x) => !x.isCounterpart);
+    op.amount = 0;
+    this.pendingRecompute.set(opId, this.recomputeAfterReads);
+    return Response.json({
+      ...lineOf(b),
+      ...(breakdownId ? { totalAmount: this.salesTotal(op), totalVatAmount: 0 } : {}),
+    });
+  }
+
+  /** Count a read of the operation towards its pending recompute; apply it when due. */
+  private tickRecompute(op: RawOpFixture): void {
+    const key = String(op.id);
+    const left = this.pendingRecompute.get(key);
+    if (left === undefined) return;
+    if (left > 1) {
+      this.pendingRecompute.set(key, left - 1);
+      return;
+    }
+    this.pendingRecompute.delete(key);
+    const net = Math.round((this.salesTotal(op) - total(op, 'ecommerceDispatch:fees')) * 100) / 100;
+    op.breakdowns.push(
+      ventilationBreakdown(this.nextBreakdownId++, { kind: 'counterpart', amount: net }),
+    );
+    op.amount = net;
+  }
+
+  private salesTotal(op: RawOpFixture): number {
+    return total(op, 'ecommerceDispatch:sales:service');
+  }
+
   private list(query: URLSearchParams): RawOpFixture[] {
     const validated = query.get('validated') === 'true';
     const offset = Number(query.get('offset') ?? 0);
@@ -316,6 +439,13 @@ export class FakeDougs {
       (r) => r.path.endsWith('/operations') && r.query.get('validated') === String(validated),
     ).length;
   }
+}
+
+function total(op: RawOpFixture, section: string): number {
+  const sum = op.breakdowns
+    .filter((b) => !b.isCounterpart && b.section === section)
+    .reduce((s, b) => s + Math.round(b.amount * 100), 0);
+  return sum / 100;
 }
 
 function notFound(): Response {

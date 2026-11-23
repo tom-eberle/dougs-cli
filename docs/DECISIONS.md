@@ -106,6 +106,13 @@ Choices made where SPEC.md left room, with the reasoning. Newest last.
   exits 7 so agents can tell "already done" from "not done because something changed".
 - Attach paths in plan files are **relative to the plan file**, so a plan and its documents can be
   moved together. Attach steps need no `expect`; the same file name already attached = satisfied.
+- `ventilate` steps fill only empty e-commerce ventilations: without a delete endpoint a wrong
+  line cannot be undone by the CLI, so any non-empty line that is not one of the step's targets
+  refuses the step. Lines already at their target amount and empty lines of the right kind are
+  reused, so an interrupted run resumes. Commission processor names come from
+  `GET …/salesChannels`, which also refuses processors the channel does not use, at preview time.
+  There is no `ops ventilate` command: the figures come from a store report and deserve a
+  reviewed plan.
 - Single-op commands (`ops set/attach/detach/validate`) build an in-memory plan and run it through
   the same executor; a single failing step keeps its own exit code, several use exit 7.
 

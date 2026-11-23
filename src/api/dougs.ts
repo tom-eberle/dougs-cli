@@ -15,16 +15,28 @@ import {
   type Operation,
   type RawBreakdown,
   type RawCategory,
+  type RawEcommerceSale,
   type RawOperation,
+  type RawSalesChannel,
   type RawVendorInvoice,
   rawAccountingYearSchema,
   rawAccountSchema,
   rawCategorySchema,
   rawDeclarationSchema,
   rawDeclarationSummarySchema,
+  rawEcommerceSaleSchema,
+  rawEcommerceSalesSchema,
   rawOperationSchema,
+  rawSalesChannelSchema,
   rawVendorInvoiceSchema,
 } from './schemas.js';
+
+/** An e-commerce ventilation line with the section it is listed under. */
+export interface EcommerceSaleLine {
+  sectionId: string;
+  subSectionId: string;
+  sale: RawEcommerceSale;
+}
 
 export const PAGE_SIZE = 40;
 
@@ -96,6 +108,7 @@ function matchesFilter(op: Operation, f: OperationFilter): boolean {
 /** Company-scoped access to the Dougs API, returning normalized data. */
 export class Dougs {
   private accountNames?: Promise<Map<string, string>>;
+  private channels?: Promise<RawSalesChannel[]>;
 
   constructor(
     readonly client: ApiClient,
@@ -212,6 +225,67 @@ export class Dougs {
     if (!/^\d+$/.test(attachmentId))
       throw usageError(`Attachment ids are numeric, got "${attachmentId}"`);
     await this.client.delete(`${this.opPath(opId)}/source-document-attachments/${attachmentId}`);
+  }
+
+  // ── e-commerce ventilation (dispatch:ecommerce:salesChannel) ────────
+
+  /** The ventilation lines of a dispatch operation, as the web app's editor lists them. */
+  async ecommerceSales(opId: string): Promise<EcommerceSaleLine[]> {
+    const raw = parseOrDrift(
+      rawEcommerceSalesSchema,
+      await this.client.get(`${this.opPath(opId)}/ecommerceSales`),
+      'e-commerce sales',
+    );
+    return raw.sections.flatMap((section) =>
+      section.subSections.flatMap((sub) =>
+        sub.sales.map((sale) => ({
+          sectionId: section.sectionId,
+          subSectionId: sub.subSectionId,
+          sale,
+        })),
+      ),
+    );
+  }
+
+  /** Add an empty (amount 0) line; Dougs answers with the line, including its breakdownId. */
+  async createEcommerceSale(
+    opId: string,
+    ecommerceSale: Record<string, unknown>,
+  ): Promise<RawEcommerceSale> {
+    return parseOrDrift(
+      rawEcommerceSaleSchema,
+      await this.client.post(`${this.opPath(opId)}/ecommerceSales`, { ecommerceSale }),
+      'e-commerce sale',
+    );
+  }
+
+  /** Change a line: the web app sends the line object back with the new amount. */
+  async updateEcommerceSale(
+    opId: string,
+    breakdownId: string,
+    ecommerceSale: Record<string, unknown>,
+  ): Promise<RawEcommerceSale> {
+    if (!/^\d+$/.test(breakdownId))
+      throw usageError(`Breakdown ids are numeric, got "${breakdownId}"`);
+    return parseOrDrift(
+      rawEcommerceSaleSchema,
+      await this.client.post(`${this.opPath(opId)}/ecommerceSales/${breakdownId}`, {
+        ecommerceSale,
+      }),
+      'e-commerce sale',
+    );
+  }
+
+  /** Sales channels with their payment processors (read once per run). */
+  salesChannels(): Promise<RawSalesChannel[]> {
+    this.channels ??= this.client
+      .get(this.path('/salesChannels'))
+      .then((raw) => parseOrDrift(z.array(rawSalesChannelSchema), raw, 'sales channels'))
+      .catch((error: unknown) => {
+        this.channels = undefined; // retry next time rather than cache a failure
+        throw error;
+      });
+    return this.channels;
   }
 
   // ── reference data ──────────────────────────────────────────────────

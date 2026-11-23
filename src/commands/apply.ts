@@ -45,7 +45,7 @@ export function registerApplyCommand(program: Command): void {
       program
         .command('apply <plan>')
         .description(
-          'Review and execute a plan: re-reads each operation, skips what is already done, verifies every write',
+          'Review and execute a plan (set, attach, detach, validate, ventilate): re-reads each operation, skips what is already done, verifies every write',
         )
         .option('--force', 'Apply steps even if the operation changed since the plan was made')
         .option('--continue-on-error', 'Keep going after a failed step')

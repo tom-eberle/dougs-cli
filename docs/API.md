@@ -177,6 +177,40 @@ Related (seen in the bundle, unused): `GET …/operations/{id}/associations/vat-
 (sales exemption choices), `GET …/operations/{id}/breakdowns/{b}/available-categories`,
 `GET …/operations/{id}/actions/autocategorize-matching-operations`, `DELETE …/operations/{id}`.
 
+### E-commerce ventilation (`type: "dispatch:ecommerce:salesChannel"`)
+One operation per sales channel and month; `metadata.salesChannelId` names the channel. Empty, it
+has **no breakdowns** and `amount: 0`. Captured from the web app:
+
+- `GET …/operations/{id}/ecommerceSales`: the editor's view. `sections[].subSections[].sales[]`
+  are lines `{saleId, label, flag, amount, taxRate, vatAmount, breakdownId, isRefund,
+  paymentsProcessorId?}`. Exempt service sales are listed under section `service`, subsection
+  `exonerateSale`; commissions under `fees`.
+- `POST …/operations/{id}/ecommerceSales` adds a line with amount 0 and returns it (with its
+  `breakdownId`). Exempt service sale: `{"ecommerceSale": {"sectionId": "service",
+  "subSectionId": "fr", "saleId": "exemption:inbound:insideEuropeanUnion" (or
+  "…outsideEuropeanUnion"), "selectedZone": "exonerateSale", "packageId": "over150"}}`.
+  Commission: `{"ecommerceSale": {"sectionId": "fees", "subSectionId": "fees", "saleId": "fees",
+  "paymentsProcessorId": <id>, "label": <processor name>}}` (whether `label` is required is
+  unknown; dougs-cli sends the name, as the web app does).
+- `POST …/operations/{id}/ecommerceSales/{breakdownId}` sets the amount: the line object sent
+  back with `amount` changed, without `vatAmount`, plus `sectionId`/`subSectionId`
+  (`service`/`fr` or `fees`/`fees`). It answers with the line plus `totalAmount`,
+  `totalVatAmount`.
+- No delete endpoint is known.
+- `GET /companies/{c}/salesChannels`: channels with `paymentsProcessorsWithDate[]
+  {paymentsProcessorId, paymentsProcessor: {id, name}}`.
+
+On the operation, lines are breakdowns with `section` `ecommerceDispatch:sales:service` /
+`ecommerceDispatch:fees` and `associationData.vatExemptionReason` (`exemption:inbound:*` on
+sales; commissions get an `exemption:outbound:*` reason Dougs sets itself, the slot is not
+editable) and `associationData.paymentsProcessorId` on commissions. Dougs adds and maintains a
+counterpart (`section: "main"`, `isCounterpart`, `isRefund`). **Quirk: asynchronously.** Right
+after the line writes, the operation can read `amount: 0` with no counterpart; a few seconds later
+(live: ~6 s) the counterpart exists and both it and `amount` equal sales − fees. Validating before
+that fails (the lines do not add up). dougs-cli polls the operation (1 s interval, 20 s timeout)
+until the net shows, then validates; on timeout it stops with `NOT_RECOMPUTED`, and re-running the
+plan finishes the job.
+
 ### Documents
 - **Attach:** `POST /companies/{c}/operations/{id}/source-document-attachments/actions/create-from-formdata`,
   `multipart/form-data`, field `file` (repeatable). Dougs shows the uploaded filename and
@@ -273,5 +307,5 @@ Box codes used by `dougs vat summary` (labels from `GET /declaration-templates/C
 | VAT assistant (`GET …/actions/vat-assistant`) | Shape is a UI wizard state; no stable data to expose |
 | Operation history (`GET …/operations/{id}/changes`) | Returns 403 for regular users |
 | Filing/confirming declarations (`…/declarations/{id}/actions/confirm`) | Out of scope: the CLI never files anything |
-| Sales invoices, e-commerce dispatch edits, cash register | Not part of the v0.1 workflows; reachable with `dougs api` |
-| App-store revenue ventilation (EU / non-EU split) | Planned for v0.2 |
+| Sales invoices, cash register; e-commerce ventilations other than exempt service sales and commissions | Not part of the v0.1 workflows; reachable with `dougs api` |
+| Computing the app-store EU / non-EU split from store reports | The `ventilate` plan step takes the figures; computing them is up to you |

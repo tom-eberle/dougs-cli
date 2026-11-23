@@ -92,6 +92,10 @@ function normalizeBreakdown(b: RawBreakdown, opInbound: boolean): Breakdown {
     vatAmount: cents(b.vatAmount),
     recoverableVat: cents(b.vatAmountWithRecoverageRate ?? b.vatAmount),
     vatExemptReason: exemptionKind(b.associationData?.vatExemptionReason),
+    paymentsProcessorId:
+      typeof b.associationData?.paymentsProcessorId === 'number'
+        ? b.associationData.paymentsProcessorId
+        : null,
   };
 }
 

@@ -59,6 +59,7 @@ Conventions everywhere:
 | `vatAmount` | number | |
 | `recoverableVat` | number | Deductible part (lower for partially recoverable categories); HT + this = TTC |
 | `vatExemptReason` | string \| null | See conventions |
+| `paymentsProcessorId` | number \| null | E-commerce commission lines: the payment processor that took the fee |
 
 ### `attachment`
 
@@ -137,11 +138,12 @@ vatAmount, reverseCharge, totals, currency }`.
 
 | Step field | Notes |
 |---|---|
-| `action` | `set`, `attach`, `detach`, `validate` |
+| `action` | `set`, `attach`, `detach`, `validate`, `ventilate` |
 | `set` | Any of `category` (id), `vatRate` (percent), `vatExempt` (`outside-eu`/`inside-eu`/`outside-eu-not-imported`/`not-applicable`/`no-document`; on sales lines only the first three and `not-applicable`), `memo` (string or null). `vatRate` and `vatExempt` are exclusive |
 | `breakdown` | Optional breakdown id, required for split operations |
 | `file`, `name` | Attach: path relative to the plan file; display name defaults to the file name without a leading `<digits>_`. Only `.pdf .png .jpg .jpeg .heic .webp`, inside the plan's directory or the current directory (symlinks resolved) unless `apply --allow-any-path` |
 | `expect` | State seen when planning (`category` with `-1` for uncategorized, `vatRate`, `vatAmount`, `vatExemptReason`, `memo`, `validated`, `attachments` count). If it changed, `apply` reports a `conflict` (exit 7) unless `--force`. For set/detach, `validated` is recorded so an operation validated at plan time ends validated again, even after an interrupted run |
+| `ventilate` | E-commerce ventilations only (`type` `dispatch:ecommerce:salesChannel`): `sales` (`zone` `inside-eu`/`outside-eu`, `amount`; exempt service sales), optional `fees` (`paymentsProcessorId`, `amount`), `net` (= sales − fees to the cent, else `PLAN_INVALID`), optional `validate`. Amounts are positive EUR with at most 2 decimals, one line per zone / processor. Refused when the operation holds other figures (`ALREADY_VENTILATED`) or another type (`NOT_ECOMMERCE_DISPATCH`); lines left by an interrupted run are reused |
 | `why` | Required; shown on review |
 
 ## `apply-report` (`dougs apply`, `dougs ops set|attach|detach|validate`)

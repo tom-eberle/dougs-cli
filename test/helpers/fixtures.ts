@@ -62,6 +62,7 @@ export interface RawOpFixture {
     originalCurrency: string | null;
   } | null;
   sourceDocumentAttachments: RawAttachmentFixture[];
+  metadata?: { salesChannelId: number };
 }
 
 export const CATEGORIES = {
@@ -268,4 +269,118 @@ export function rawAccounts() {
       metadata: { balance: { balance: 1234.56 }, balanceUpdatedAt: '2026-08-31T08:00:00.000Z' },
     },
   ];
+}
+
+// ── e-commerce ventilation (dispatch:ecommerce:salesChannel) ────────────
+
+export const SALES_CHANNEL = 4242;
+export const PROCESSOR = 11111;
+
+export function rawSalesChannels() {
+  return [
+    {
+      id: SALES_CHANNEL,
+      name: 'Fictional App Store',
+      paymentsProcessorsWithDate: [
+        {
+          id: 1,
+          salesChannelId: SALES_CHANNEL,
+          paymentsProcessorId: PROCESSOR,
+          paymentsProcessor: { id: PROCESSOR, name: 'Fictional Pay' },
+        },
+      ],
+    },
+  ];
+}
+
+type VentilationLine =
+  | { kind: 'sale'; saleId: string; amount: number }
+  | { kind: 'fee'; processor: number; amount: number }
+  | { kind: 'counterpart'; amount: number };
+
+/** A breakdown as Dougs creates it in a ventilation (synthetic category ids 801–803). */
+export function ventilationBreakdown(id: number, line: VentilationLine): RawBreakdownFixture {
+  const common = {
+    id,
+    amount: line.amount,
+    isRefund: false,
+    hasVat: true,
+    resolvedCategoryPath: [] as number[],
+    vatRate: 0,
+    vatAmount: 0,
+    vatAmountWithRecoverageRate: 0,
+    manualVatAmount: null,
+    isVatAmountManuallyModified: false,
+    amountExcludingTaxesWithRecoverageRate: line.amount,
+  };
+  const reason = (isEditable: boolean) => [
+    { name: 'vatExemptionReason', slots: { reason: { isOptional: false, isEditable } } },
+  ];
+  if (line.kind === 'sale')
+    return {
+      ...common,
+      isCounterpart: false,
+      isInbound: true,
+      section: 'ecommerceDispatch:sales:service',
+      categoryId: 801,
+      resolvedCategoryId: 801,
+      resolvedCategoryPath: [801],
+      categoryWording: 'Prestations exonérées fictives',
+      categoryGroup: { id: 1, name: 'Recettes' },
+      associationData: { vatExemptionReason: line.saleId, salesChannelId: SALES_CHANNEL },
+      associations: reason(true),
+    };
+  if (line.kind === 'fee')
+    return {
+      ...common,
+      isCounterpart: false,
+      isInbound: false,
+      section: 'ecommerceDispatch:fees',
+      categoryId: 802,
+      resolvedCategoryId: 802,
+      resolvedCategoryPath: [802],
+      categoryWording: 'Commissions fictives',
+      categoryGroup: { id: 2, name: 'Frais de fonctionnement' },
+      // ASSUMED: Dougs sets the commission's exemption reason itself (live: the slot is not editable).
+      associationData: {
+        paymentsProcessorId: line.processor,
+        vatExemptionReason: 'exemption:outbound:insideEuropeanUnion',
+      },
+      associations: reason(false),
+    };
+  return {
+    ...common,
+    isCounterpart: true,
+    isInbound: false,
+    isRefund: true,
+    hasVat: false,
+    section: 'main',
+    vatRate: null,
+    categoryId: 803,
+    resolvedCategoryId: 803,
+    resolvedCategoryPath: [803],
+    categoryWording: 'Encaissement e-commerce fictif',
+    categoryGroup: { id: 1, name: 'Recettes' },
+    associationData: { salesChannelId: SALES_CHANNEL },
+    associations: [],
+  };
+}
+
+/** An e-commerce ventilation operation; empty (no breakdowns) by default, as Dougs creates it. */
+export function dispatchOp(
+  o: { id?: number; validated?: boolean; date?: string; lines?: VentilationLine[] } = {},
+): RawOpFixture {
+  const id = o.id ?? nextId++;
+  const lines = o.lines ?? [];
+  const counterpart = lines.find((l) => l.kind === 'counterpart');
+  return {
+    ...rawOp({ id, date: o.date ?? '2026-07-31', validated: o.validated ?? false }),
+    type: 'dispatch:ecommerce:salesChannel',
+    wording: 'Fictional App Store - Ventilation des recettes e-commerce',
+    amount: counterpart?.amount ?? 0,
+    isInbound: true,
+    transaction: null,
+    metadata: { salesChannelId: SALES_CHANNEL },
+    breakdowns: lines.map((l, i) => ventilationBreakdown(id * 10 + i, l)),
+  };
 }

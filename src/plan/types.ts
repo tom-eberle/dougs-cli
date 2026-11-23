@@ -86,14 +86,96 @@ export const detachStepSchema = z.strictObject({
 
 export const validateStepSchema = z.strictObject({ ...stepBase, action: z.literal('validate') });
 
+/** Integer cents, so sums compare exactly (0.1 + 0.2 = 0.3). */
+export const toCents = (eur: number): number => Math.round(eur * 100);
+
+const amount = z
+  .number()
+  .positive()
+  .refine((v) => Math.abs(v * 100 - toCents(v)) < 1e-6, 'amounts have at most 2 decimals')
+  .describe('EUR, positive, at most 2 decimals');
+
+/**
+ * Zones of exempt service sales (`exemption:inbound:*`). Other kinds of sales
+ * (French VAT rates, goods) are not supported yet.
+ */
+export const VENTILATION_ZONES = ['inside-eu', 'outside-eu'] as const;
+export type VentilationZone = (typeof VENTILATION_ZONES)[number];
+
+export const ventilationSchema = z
+  .strictObject({
+    sales: z
+      .array(
+        z.strictObject({
+          zone: z
+            .enum(VENTILATION_ZONES)
+            .describe('Exempt service sales to customers inside / outside the EU'),
+          amount,
+        }),
+      )
+      .min(1)
+      .describe('One line per zone'),
+    fees: z
+      .array(
+        z.strictObject({
+          paymentsProcessorId: z
+            .number()
+            .int()
+            .positive()
+            .describe("Payment processor of the operation's sales channel (Dougs id)"),
+          amount,
+        }),
+      )
+      .optional()
+      .describe('Commissions kept by the platform, one line per payment processor'),
+    net: z
+      .number()
+      .describe('sum(sales) − sum(fees), to the cent: what the counterpart line ends at'),
+    validate: z.boolean().optional().describe('Validate the operation once it is filled'),
+  })
+  .refine((v) => new Set(v.sales.map((s) => s.zone)).size === v.sales.length, {
+    message: 'each zone appears once in sales',
+    path: ['sales'],
+  })
+  .refine(
+    (v) => new Set((v.fees ?? []).map((f) => f.paymentsProcessorId)).size === (v.fees ?? []).length,
+    { message: 'each paymentsProcessorId appears once in fees', path: ['fees'] },
+  )
+  .refine((v) => toCents(v.net) === ventilationNetCents(v), {
+    message: 'net must equal sum(sales) − sum(fees) to the cent',
+    path: ['net'],
+  });
+export type Ventilation = z.infer<typeof ventilationSchema>;
+
+export function ventilationNetCents(v: {
+  sales: readonly { amount: number }[];
+  fees?: readonly { amount: number }[];
+}): number {
+  const sum = (lines: readonly { amount: number }[]) =>
+    lines.reduce((total, l) => total + toCents(l.amount), 0);
+  return sum(v.sales) - sum(v.fees ?? []);
+}
+
+export const ventilateStepSchema = z
+  .strictObject({
+    ...stepBase,
+    action: z.literal('ventilate'),
+    ventilate: ventilationSchema,
+  })
+  .describe(
+    'Fill an empty e-commerce ventilation (operation type dispatch:ecommerce:salesChannel) with sales and commission lines',
+  );
+
 export const planStepSchema = z.discriminatedUnion('action', [
   setStepSchema,
   attachStepSchema,
   detachStepSchema,
   validateStepSchema,
+  ventilateStepSchema,
 ]);
 export type PlanStep = z.infer<typeof planStepSchema>;
 export type SetStep = z.infer<typeof setStepSchema>;
+export type VentilateStep = z.infer<typeof ventilateStepSchema>;
 
 export const planSchema = z
   .strictObject({
@@ -136,7 +218,7 @@ export const STEP_STATUSES = [
 export const stepResultSchema = z.object({
   step: z.string(),
   op: z.string(),
-  action: z.enum(['set', 'attach', 'detach', 'validate']),
+  action: z.enum(['set', 'attach', 'detach', 'validate', 'ventilate']),
   status: z.enum(STEP_STATUSES),
   reason: z.string().optional(),
   why: z.string(),
