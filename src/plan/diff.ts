@@ -159,8 +159,7 @@ export function expectedKeys(op: Operation, step: PlanStep, after?: Operation): 
     case 'validate':
       return new Set(['validated']);
     case 'ventilate': {
-      // Its lines, new or reused, and the counterpart Dougs recomputes; validation
-      // also recomputes the counterpart.
+      // Its lines, new or reused, and the counterpart Dougs (re)creates at the net.
       const keys = new Set<string>(step.ventilate.validate ? ['validated'] : []);
       for (const b of [...op.breakdowns, ...(after?.breakdowns ?? [])])
         if (isVentilationBreakdown(b))

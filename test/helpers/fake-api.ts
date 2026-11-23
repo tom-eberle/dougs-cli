@@ -44,6 +44,9 @@ export class FakeDougs {
   nextAttachmentId = 900_000;
   nextBreakdownId = 800_000;
   salesChannels: unknown[] = rawSalesChannels();
+  /** Reads of a ventilation until Dougs' asynchronous recompute shows (Infinity: never). */
+  recomputeAfterReads = 2;
+  pendingRecompute = new Map<string, number>();
   /**
    * Password login. OBSERVED (web app code): endpoints, request bodies and the
    * authenticated / mfaRequired / ssoRequired statuses. ASSUMED: HTTP 401 for a
@@ -235,6 +238,7 @@ export class FakeDougs {
     const one = path.match(new RegExp(`^${c}/operations/(\\d+)$`));
     if (one && method === 'GET') {
       const op = this.ops.get(one[1]!);
+      if (op) this.tickRecompute(op);
       return op
         ? Response.json(op)
         : Response.json({ message: 'Not Found', statusCode: 404 }, { status: 404 });
@@ -301,12 +305,6 @@ export class FakeDougs {
         )
           b.associations = [...(b.associations ?? []), { name: 'vatExemptionReason', slots: {} }];
       }
-      // OBSERVED: validating a ventilation recomputes its counterpart and amount to sales − fees.
-      if (next.type === DISPATCH && next.validated && !current.validated) {
-        const net = this.salesTotal(next) - total(next, 'ecommerceDispatch:fees');
-        next.amount = net;
-        for (const b of next.breakdowns) if (b.isCounterpart) b.amount = net;
-      }
       this.onUpdate?.(current, next);
       this.ops.set(one[1]!, next);
       return Response.json(next);
@@ -317,8 +315,10 @@ export class FakeDougs {
   /**
    * E-commerce ventilation lines. OBSERVED (web app traffic): create with amount 0, then
    * update by breakdown id with the line sent back; the listing groups exempt service sales
-   * under subsection `exonerateSale`. OBSERVED: the counterpart follows the sales total, and
-   * commission updates change neither it nor the operation amount (validation does).
+   * under subsection `exonerateSale`. OBSERVED (live): right after the writes the operation
+   * has amount 0 and no counterpart; seconds later Dougs creates the counterpart, and both it
+   * and the amount equal sales − fees. Modelled as: the recompute lands on the
+   * `recomputeAfterReads`-th read of the operation after the last write.
    * ASSUMED: validated operations refuse these writes with 403, like other edits.
    */
   private ecommerceSales(req: RecordedRequest, opId: string, breakdownId?: string): Response {
@@ -394,20 +394,30 @@ export class FakeDougs {
       b.amount = sale.amount as number;
       b.amountExcludingTaxesWithRecoverageRate = b.amount;
     }
-    if (b.section !== 'ecommerceDispatch:fees') {
-      let cp = op.breakdowns.find((x) => x.isCounterpart);
-      if (!cp) {
-        cp = ventilationBreakdown(this.nextBreakdownId++, { kind: 'counterpart', amount: 0 });
-        op.breakdowns.push(cp);
-      }
-      cp.amount = this.salesTotal(op);
-      cp.amountExcludingTaxesWithRecoverageRate = cp.amount;
-      op.amount = cp.amount;
-    }
+    op.breakdowns = op.breakdowns.filter((x) => !x.isCounterpart);
+    op.amount = 0;
+    this.pendingRecompute.set(opId, this.recomputeAfterReads);
     return Response.json({
       ...lineOf(b),
       ...(breakdownId ? { totalAmount: this.salesTotal(op), totalVatAmount: 0 } : {}),
     });
+  }
+
+  /** Count a read of the operation towards its pending recompute; apply it when due. */
+  private tickRecompute(op: RawOpFixture): void {
+    const key = String(op.id);
+    const left = this.pendingRecompute.get(key);
+    if (left === undefined) return;
+    if (left > 1) {
+      this.pendingRecompute.set(key, left - 1);
+      return;
+    }
+    this.pendingRecompute.delete(key);
+    const net = Math.round((this.salesTotal(op) - total(op, 'ecommerceDispatch:fees')) * 100) / 100;
+    op.breakdowns.push(
+      ventilationBreakdown(this.nextBreakdownId++, { kind: 'counterpart', amount: net }),
+    );
+    op.amount = net;
   }
 
   private salesTotal(op: RawOpFixture): number {
@@ -430,8 +440,6 @@ export class FakeDougs {
     ).length;
   }
 }
-
-const DISPATCH = 'dispatch:ecommerce:salesChannel';
 
 function total(op: RawOpFixture, section: string): number {
   const sum = op.breakdowns

@@ -1,10 +1,11 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { normalizeOperation } from '../src/api/normalize.js';
 import { rawOperationSchema } from '../src/api/schemas.js';
 import { applyPlan, executeStep } from '../src/plan/apply.js';
 import { buildPlan, type PlanStep, planSchema } from '../src/plan/types.js';
+import { VENTILATION_POLL } from '../src/plan/ventilate.js';
 import { FakeDougs, type RecordedRequest } from './helpers/fake-api.js';
 import { COMPANY, dispatchOp, PROCESSOR, type RawOpFixture, rawOp } from './helpers/fixtures.js';
 import { dougsFor, runCli, tempHome } from './helpers/run.js';
@@ -58,6 +59,10 @@ function writePlan(steps: PlanStep[]): string {
   );
   return file;
 }
+
+const POLL = { ...VENTILATION_POLL };
+beforeEach(() => Object.assign(VENTILATION_POLL, { intervalMs: 1, timeoutMs: 100 }));
+afterEach(() => Object.assign(VENTILATION_POLL, POLL));
 
 describe('ventilate: e-commerce dispatch', () => {
   it('dry-run shows every line, the net and the validation, and writes nothing', async () => {
@@ -126,7 +131,16 @@ describe('ventilate: e-commerce dispatch', () => {
     ]);
     expect(sent.every((s) => !('vatAmount' in s) && typeof s.breakdownId === 'number')).toBe(true);
 
-    // Validation went through the operation update, and Dougs recomputed the net.
+    // Dougs recomputes asynchronously: the first read after the writes has no counterpart,
+    // so the executor polls and validates only once the net shows.
+    const lastLine = api.requests.indexOf(updates(api).at(-1)!);
+    const validation = api.requests.findIndex(
+      (r, i) => i > lastLine && r.method === 'POST' && r.path.endsWith('/operations/1000001'),
+    );
+    const reads = api.requests
+      .slice(lastLine + 1, validation)
+      .filter((r) => r.method === 'GET' && r.path.endsWith('/operations/1000001'));
+    expect(reads.length).toBeGreaterThanOrEqual(2);
     const last = api.writes.at(-1)!;
     expect(last.path).toBe(`/companies/${COMPANY}/operations/1000001`);
     expect((last.body as RawOpFixture).validated).toBe(true);
@@ -157,15 +171,43 @@ describe('ventilate: e-commerce dispatch', () => {
     expect(api.writes).toHaveLength(writes);
   });
 
-  it('without validate: leaves it open, the counterpart pending at the sales total', async () => {
+  it('without validate: waits for the recomputed net and leaves the operation open', async () => {
     const api = new FakeDougs([dispatchOp({ id: 1000001 })]);
     const dougs = dougsFor(api);
     const step = ventilate('1000001', { validate: false });
     expect((await executeStep(dougs, step)).status).toBe('applied');
     const raw = api.ops.get('1000001')!;
     expect(raw.validated).toBe(false);
-    expect(raw.breakdowns.find((b) => b.isCounterpart)?.amount).toBe(400.5);
+    expect(raw.breakdowns.find((b) => b.isCounterpart)?.amount).toBe(350.25);
+    expect(raw.amount).toBe(350.25);
     expect((await executeStep(dougs, step)).status).toBe('skipped');
+  });
+
+  it('does not validate before Dougs recomputes; a later re-run finishes', async () => {
+    const api = new FakeDougs([dispatchOp({ id: 1000001 })]);
+    api.recomputeAfterReads = Number.POSITIVE_INFINITY;
+    const dougs = dougsFor(api);
+    const plan = buildPlan(COMPANY, 't', [ventilate('1000001')]);
+    const first = await applyPlan(dougs, plan);
+    expect(first.results[0]).toMatchObject({
+      status: 'failed',
+      error: {
+        code: 'PARTIALLY_APPLIED',
+        message: expect.stringContaining('has not recomputed operation 1000001 to the net 350.25'),
+      },
+    });
+    const validations = () =>
+      api.writes.filter(
+        (r) => r.path.endsWith('/operations/1000001') && (r.body as RawOpFixture).validated,
+      );
+    expect(validations()).toHaveLength(0);
+    // Dougs catches up; the same plan then only validates.
+    api.pendingRecompute.set('1000001', 1);
+    const writes = salesWrites(api).length;
+    expect((await applyPlan(dougs, plan)).results[0]).toMatchObject({ status: 'applied' });
+    expect(salesWrites(api)).toHaveLength(writes);
+    expect(validations()).toHaveLength(1);
+    expect(toOp(api.ops.get('1000001')!)).toMatchObject({ validated: true, amount: 350.25 });
   });
 
   it('rejects a plan whose net is not sales − fees to the cent', async () => {

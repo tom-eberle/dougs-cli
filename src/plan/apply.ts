@@ -237,15 +237,9 @@ export function validationProblems(raw: RawOperation): string[] {
   if (mains.some((b) => b.categoryId === -1)) problems.push('a breakdown is uncategorized');
   const signed = (inbound: boolean, amount: number) => (inbound ? amount : -amount);
   const total = mains.reduce((s, b) => s + signed(b.isInbound ?? raw.isInbound, b.amount), 0);
-  // E-commerce ventilations: Dougs keeps the amount at the sales total until validation
-  // recomputes it to sales − fees (see plan/ventilate.ts); that pending state is fine.
-  const dispatch = raw.type === ECOMMERCE_DISPATCH;
-  const salesTotal = mains
-    .filter((b) => (b.isInbound ?? raw.isInbound) && !b.isRefund)
-    .reduce((s, b) => s + b.amount, 0);
-  const pending = dispatch && Math.abs(salesTotal - raw.amount) <= 0.01;
-  if (mains.length && !pending && Math.abs(total - signed(raw.isInbound, raw.amount)) > 0.01)
+  if (mains.length && Math.abs(total - signed(raw.isInbound, raw.amount)) > 0.01)
     problems.push('its breakdowns do not add up to the operation amount');
+  const dispatch = raw.type === ECOMMERCE_DISPATCH;
   for (const b of mains) {
     const slot = b.associations?.find((a) => a.name === 'vatExemptionReason');
     const reason = (

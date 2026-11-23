@@ -23,11 +23,11 @@ import {
  *   amount, as the web app does. No delete endpoint is known, so lines are
  *   never removed: a re-run reuses an empty line instead of adding another.
  * - Dougs maintains the counterpart breakdown (`section: "main"`,
- *   `isCounterpart`) itself. After sales lines are added it equals the sales
- *   total; commission updates do not change it, nor the operation `amount`.
- *   Only validation recomputes both to sales − fees (the web app's header shows
- *   the net at once). So before validation a counterpart at the sales total is
- *   "pending recompute", not an error; after validation it must be the net.
+ *   `isCounterpart`) itself, asynchronously: right after the line writes the
+ *   operation can have amount 0 and no counterpart at all; a few seconds later
+ *   (live: ~6 s) the counterpart exists and both it and the operation amount
+ *   equal sales − fees. Validating before that is refused (the lines do not add
+ *   up), so after writing, the operation is polled until the net is there.
  * - Commission lines get their VAT exemption reason from Dougs (the slot is not
  *   editable), so the CLI never sets it.
  */
@@ -124,18 +124,48 @@ function counterpartOf(op: Operation): Breakdown | undefined {
   return op.breakdowns.find((b) => b.isCounterpart);
 }
 
-/**
- * After validation the counterpart and the operation amount are the net; before,
- * they may still be the sales total (Dougs recomputes them on validation).
- */
+/** Dougs has recomputed the ventilation: one counterpart, it and the operation amount at the net. */
 function counterpartSettled(op: Operation, v: Ventilation): boolean {
   const cps = op.breakdowns.filter((b) => b.isCounterpart);
-  if (cps.length > 1) return false;
-  const cp = cps[0];
   const net = ventilationNetCents(v);
-  if (op.validated) return !!cp && toCents(cp.amount) === net && toCents(op.amount) === net;
-  const sales = v.sales.reduce((total, s) => total + toCents(s.amount), 0);
-  return !cp || toCents(cp.amount) === net || toCents(cp.amount) === sales;
+  return cps.length === 1 && toCents(cps[0]!.amount) === net && toCents(op.amount) === net;
+}
+
+/**
+ * How long to wait for Dougs' asynchronous recompute of the counterpart after
+ * the line writes. Mutable so tests can shorten it.
+ */
+export const VENTILATION_POLL = { intervalMs: 1000, timeoutMs: 20_000 };
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Re-read until the lines and the recomputed net show; refuse to go on otherwise. */
+async function waitForRecompute(dougs: Dougs, opId: string, v: Ventilation): Promise<void> {
+  const deadline = Date.now() + VENTILATION_POLL.timeoutMs;
+  for (;;) {
+    const { op } = await dougs.getOperation(opId);
+    const filled = ventilationLinesFilled(op, v);
+    if (filled && counterpartSettled(op, v)) return;
+    if (Date.now() >= deadline) {
+      const cp = op.breakdowns.find((b) => b.isCounterpart);
+      const seconds = Math.round(VENTILATION_POLL.timeoutMs / 1000);
+      throw filled
+        ? new DougsError(
+            'NOT_RECOMPUTED',
+            `Dougs has not recomputed operation ${opId} to the net ${(ventilationNetCents(v) / 100).toFixed(2)} after ${seconds} s (amount ${op.amount.toFixed(2)}, counterpart ${cp ? cp.amount.toFixed(2) : 'missing'}); it was not validated`,
+            {
+              exitCode: ExitCode.rejected,
+              hint: 're-run the same plan in a minute: the lines are kept and it validates then',
+            },
+          )
+        : new DougsError(
+            'VERIFY_FAILED',
+            `Dougs accepted the lines of operation ${opId}, but re-reading it does not show the planned figures; it was not validated`,
+            { exitCode: ExitCode.rejected, hint: 'inspect it with: dougs ops get <id>' },
+          );
+    }
+    await sleep(VENTILATION_POLL.intervalMs);
+  }
 }
 
 /** Every target line exists at its amount, and no other line holds figures. */
@@ -340,14 +370,8 @@ export async function applyVentilation(
           );
       }
     }
-    // Check the lines before anyone validates them: a wrong net validated is worse than one left open.
-    const { op } = await dougs.getOperation(opId);
-    if (!ventilationLinesFilled(op, v))
-      throw new DougsError(
-        'VERIFY_FAILED',
-        `Dougs accepted the lines of operation ${opId}, but re-reading it does not show the planned figures; it was not validated`,
-        { exitCode: ExitCode.rejected, hint: 'inspect it with: dougs ops get <id>' },
-      );
+    // Before anyone validates: the lines must show, and Dougs must have recomputed the net.
+    await waitForRecompute(dougs, opId, v);
   } catch (error) {
     const e = toDougsError(error);
     if (!created.length) throw e;

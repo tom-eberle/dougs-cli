@@ -9,13 +9,13 @@ All notable changes to this project are documented here. The format follows
 ### Added
 - `ventilate` plan steps fill an empty e-commerce ventilation (`dispatch:ecommerce:salesChannel`)
   with exempt service sales (inside / outside the EU) and commissions by payment processor, check
-  `net` = sales − fees to the cent, optionally validate, and verify by re-reading. Interrupted
-  runs resume without duplicate lines.
+  `net` = sales − fees to the cent, wait for Dougs' asynchronous recompute of the net, optionally
+  validate, and verify by re-reading. Interrupted runs resume without duplicate lines.
 - Breakdowns expose `paymentsProcessorId` (e-commerce commission lines).
 
 ### Changed
-- Validation no longer requires the lines of an e-commerce ventilation to add up to its amount
-  (Dougs only recomputes it on validation), nor a VAT exemption reason the user cannot edit.
+- Validation of an e-commerce ventilation no longer requires a VAT exemption reason the user
+  cannot edit (Dougs fills it on commission lines).
 
 ## [0.1.1] — 2026-10-07
 

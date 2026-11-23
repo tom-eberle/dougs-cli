@@ -204,11 +204,12 @@ On the operation, lines are breakdowns with `section` `ecommerceDispatch:sales:s
 `ecommerceDispatch:fees` and `associationData.vatExemptionReason` (`exemption:inbound:*` on
 sales; commissions get an `exemption:outbound:*` reason Dougs sets itself, the slot is not
 editable) and `associationData.paymentsProcessorId` on commissions. Dougs adds and maintains a
-counterpart (`section: "main"`, `isCounterpart`, `isRefund`). **Quirk:** the counterpart and the
-operation `amount` follow the sales total; commission updates do not change them. Validation
-recomputes both to sales − fees. dougs-cli therefore accepts the sales total as "pending" before
-validation, requires the net after it, and does not apply the "breakdowns add up" validation
-check to these operations.
+counterpart (`section: "main"`, `isCounterpart`, `isRefund`). **Quirk: asynchronously.** Right
+after the line writes, the operation can read `amount: 0` with no counterpart; a few seconds later
+(live: ~6 s) the counterpart exists and both it and `amount` equal sales − fees. Validating before
+that fails (the lines do not add up). dougs-cli polls the operation (1 s interval, 20 s timeout)
+until the net shows, then validates; on timeout it stops with `NOT_RECOMPUTED`, and re-running the
+plan finishes the job.
 
 ### Documents
 - **Attach:** `POST /companies/{c}/operations/{id}/source-document-attachments/actions/create-from-formdata`,
