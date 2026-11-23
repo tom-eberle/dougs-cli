@@ -23,6 +23,12 @@ import type {
   SetStep,
   StepResult,
 } from './types.js';
+import {
+  applyVentilation,
+  ECOMMERCE_DISPATCH,
+  processorLabels,
+  ventilationRefusal,
+} from './ventilate.js';
 
 export interface ApplyOptions {
   dryRun?: boolean;
@@ -207,14 +213,14 @@ async function unvalidate(dougs: Dougs, raw: RawOperation): Promise<RawOperation
   }
 }
 
-/** Validate again after an edit, unless Dougs would now show errors (then it stays open). */
+/** Validate (again) after an edit, unless Dougs would now show errors (then it stays open). */
 async function validateAgain(dougs: Dougs, opId: string): Promise<void> {
   const now = await dougs.getRaw(opId);
   const problems = validationProblems(now);
   if (problems.length)
     throw new DougsError(
       'NOT_REVALIDATED',
-      `Edited operation ${opId}, but it cannot be validated again: ${problems.join('; ')}`,
+      `Edited operation ${opId}, but it cannot be validated: ${problems.join('; ')}`,
       {
         exitCode: ExitCode.rejected,
         hint: 'fix it, then: dougs ops validate <id>',
@@ -231,14 +237,25 @@ export function validationProblems(raw: RawOperation): string[] {
   if (mains.some((b) => b.categoryId === -1)) problems.push('a breakdown is uncategorized');
   const signed = (inbound: boolean, amount: number) => (inbound ? amount : -amount);
   const total = mains.reduce((s, b) => s + signed(b.isInbound ?? raw.isInbound, b.amount), 0);
-  if (mains.length && Math.abs(total - signed(raw.isInbound, raw.amount)) > 0.01)
+  // E-commerce ventilations: Dougs keeps the amount at the sales total until validation
+  // recomputes it to sales − fees (see plan/ventilate.ts); that pending state is fine.
+  const dispatch = raw.type === ECOMMERCE_DISPATCH;
+  const salesTotal = mains
+    .filter((b) => (b.isInbound ?? raw.isInbound) && !b.isRefund)
+    .reduce((s, b) => s + b.amount, 0);
+  const pending = dispatch && Math.abs(salesTotal - raw.amount) <= 0.01;
+  if (mains.length && !pending && Math.abs(total - signed(raw.isInbound, raw.amount)) > 0.01)
     problems.push('its breakdowns do not add up to the operation amount');
   for (const b of mains) {
     const slot = b.associations?.find((a) => a.name === 'vatExemptionReason');
-    const reason = (slot?.slots as { reason?: { isOptional?: boolean } } | undefined)?.reason;
+    const reason = (
+      slot?.slots as { reason?: { isOptional?: boolean; isEditable?: boolean } } | undefined
+    )?.reason;
+    // On e-commerce commissions the reason is not editable: Dougs fills it.
     if (
       slot &&
       reason?.isOptional === false &&
+      !(dispatch && reason.isEditable === false) &&
       b.vatAmount === 0 &&
       !b.associationData?.vatExemptionReason
     )
@@ -303,6 +320,10 @@ function guard(raw: RawOperation, op: Operation, step: PlanStep, options: ApplyO
         { exitCode: ExitCode.usage, hint: 'for sales use outside-eu, inside-eu or not-applicable' },
       );
   }
+  if (step.action === 'ventilate') {
+    const refusal = ventilationRefusal(op, step.ventilate);
+    if (refusal) throw refusal;
+  }
   if (step.action === 'validate' && !op.validated) {
     const problems = validationProblems(raw);
     if (problems.length)
@@ -344,11 +365,16 @@ export async function executeStep(
   const { raw, op } = await dougs.getOperation(step.op);
   const result = { ...base, operation: summary(op), changes: describeChanges(op, step) };
   // Dougs treats validated operations as read-only (web app: isReadOnly = validated
-  // || locked). Like its editor, set/detach reopen them, edit, then validate again.
-  // An operation validated when the plan was made must end validated, even if an
-  // earlier, interrupted run left it open.
-  const reopenable = step.action === 'set' || step.action === 'detach';
-  const mustEndValidated = reopenable && (op.validated || step.expect?.validated === true);
+  // || locked). Like its editor, set/detach/ventilate reopen them, edit, then validate
+  // again. An operation validated when the plan was made must end validated, even if
+  // an earlier, interrupted run left it open; so must a ventilation asking for it.
+  const reopenable =
+    step.action === 'set' || step.action === 'detach' || step.action === 'ventilate';
+  const mustEndValidated =
+    reopenable &&
+    (op.validated ||
+      step.expect?.validated === true ||
+      (step.action === 'ventilate' && step.ventilate.validate === true));
   const leftOpen = mustEndValidated && !op.validated;
   const revalidated = { field: 'validated', from: false, to: true };
   if (isSatisfied(op, step)) {
@@ -380,6 +406,8 @@ export async function executeStep(
       revalidated,
     ];
   else if (leftOpen) result.changes = [...result.changes, revalidated];
+  // Unknown payment processors fail the preview, not halfway through the writes.
+  if (step.action === 'ventilate') await processorLabels(dougs, raw, step.ventilate);
   if (options.dryRun) return { ...result, status: 'planned' };
 
   const before = snapshot(op);
@@ -394,6 +422,8 @@ export async function executeStep(
       ]);
     } else if (step.action === 'detach') await dougs.detachAttachment(step.op, step.attachmentId);
     else if (step.action === 'validate') await dougs.updateOperation({ ...raw, validated: true });
+    else if (step.action === 'ventilate')
+      await applyVentilation(dougs, current, step.op, step.ventilate);
     else await applySet(dougs, current, op, step);
     if (mustEndValidated) await validateAgain(dougs, step.op);
   } catch (error) {
@@ -438,7 +468,7 @@ export async function executeStep(
       ),
       snapshotDiff(before, snapshot(after)),
     );
-  const expected = expectedKeys(op, step);
+  const expected = expectedKeys(op, step, after);
   if (mustEndValidated) expected.add('validated');
   const sideEffects = snapshotDiff(before, snapshot(after), expected);
   return { ...result, status: 'applied', ...(sideEffects.length ? { sideEffects } : {}) };

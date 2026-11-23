@@ -242,6 +242,20 @@ Guard-rails on every change:
 
 *One step on an operation Dougs already validated: reopen, edit, validate again, then read it back to catch side effects.*
 
+**E-commerce ventilations** (the monthly `dispatch:ecommerce:salesChannel` operation of an app
+store or marketplace) are filled with a `ventilate` step: exempt service sales by zone, commissions
+by payment processor, and the `net` (sales − fees, checked to the cent). Only empty ventilations
+are filled; a re-run reuses lines an interrupted run left behind. See `dougs schema plan-step`.
+
+```json
+{ "id": "s1", "op": "1000001", "action": "ventilate", "expect": { "validated": false },
+  "why": "Store report for July: EU 100.00, non-EU 300.00, fees 50.00",
+  "ventilate": { "sales": [ { "zone": "inside-eu", "amount": 100.00 },
+                            { "zone": "outside-eu", "amount": 300.00 } ],
+                 "fees": [ { "paymentsProcessorId": 11111, "amount": 50.00 } ],
+                 "net": 350.00, "validate": true } }
+```
+
 Plans are data, so they are treated as untrusted: an `attach` step can only upload receipt files
 (`.pdf .png .jpg .jpeg .heic .webp`) from the plan's directory or the current directory, and the
 preview and confirmation list the absolute path of every file that would be uploaded. Use

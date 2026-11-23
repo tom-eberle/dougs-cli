@@ -96,6 +96,53 @@ export const rawOperationSchema = z.looseObject({
 });
 export type RawOperation = z.infer<typeof rawOperationSchema>;
 
+/**
+ * One line of an e-commerce ventilation, as `GET …/operations/{id}/ecommerceSales`
+ * lists it and the create/update endpoints return it (the web app sends it back
+ * with a new `amount`).
+ */
+export const rawEcommerceSaleSchema = z.looseObject({
+  saleId: z.string(),
+  amount: z.number(),
+  breakdownId: id,
+  isRefund: z.boolean().optional(),
+  paymentsProcessorId: z.number().nullable().optional(),
+});
+export type RawEcommerceSale = z.infer<typeof rawEcommerceSaleSchema>;
+
+export const rawEcommerceSalesSchema = z.looseObject({
+  sections: z.array(
+    z.looseObject({
+      sectionId: z.string(),
+      subSections: z
+        .array(
+          z.looseObject({
+            subSectionId: z.string(),
+            sales: z.array(rawEcommerceSaleSchema).default([]),
+          }),
+        )
+        .default([]),
+    }),
+  ),
+});
+
+export const rawSalesChannelSchema = z.looseObject({
+  id,
+  name: z.string().nullable().optional(),
+  paymentsProcessorsWithDate: z
+    .array(
+      z.looseObject({
+        paymentsProcessorId: id,
+        paymentsProcessor: z
+          .looseObject({ id, name: z.string().nullable().optional() })
+          .nullable()
+          .optional(),
+      }),
+    )
+    .default([]),
+});
+export type RawSalesChannel = z.infer<typeof rawSalesChannelSchema>;
+
 export const rawAccountSchema = z.looseObject({
   id,
   name: z.string().nullable().optional(),
@@ -271,6 +318,10 @@ export const breakdownSchema = z.object({
     .describe(
       'outside-eu | inside-eu | outside-eu-not-imported | not-applicable | no-document. The same short names cover purchase (outbound) and sales (inbound) reasons; which one is meant follows from the line (direction and isRefund). Unknown Dougs values are passed through raw.',
     ),
+  paymentsProcessorId: z
+    .number()
+    .nullable()
+    .describe('E-commerce commission lines: the payment processor that took the fee'),
 });
 export type Breakdown = z.infer<typeof breakdownSchema>;
 

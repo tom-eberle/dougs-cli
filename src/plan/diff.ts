@@ -3,6 +3,7 @@ import type { Breakdown, Operation } from '../api/schemas.js';
 import { DougsError, ExitCode } from '../output/errors.js';
 import { sameCents, vatFromGross } from '../util/money.js';
 import type { Change, Expectation, PlanStep, SetChanges, SetStep } from './types.js';
+import { describeVentilation, isVentilationBreakdown, ventilationSatisfied } from './ventilate.js';
 
 /** The breakdown a set-step targets: explicit id, else the single main one. */
 export function targetBreakdown(op: Operation, step: Pick<SetStep, 'breakdown'>): Breakdown {
@@ -68,6 +69,8 @@ export function isSatisfied(op: Operation, step: PlanStep): boolean {
       return !op.attachments.some((a) => a.id === step.attachmentId);
     case 'validate':
       return op.validated;
+    case 'ventilate':
+      return ventilationSatisfied(op, step.ventilate);
     case 'set': {
       const b = targetBreakdown(op, step);
       return (Object.entries(step.set) as [keyof SetChanges, unknown][]).every(([field, value]) =>
@@ -94,7 +97,7 @@ export function observe(op: Operation, breakdown?: Breakdown): Required<Expectat
 /** What a step changes, as the subset of `observe()` fields it depends on. */
 type StepShape =
   | { action: 'set'; set: SetChanges; breakdown?: string }
-  | { action: 'attach' | 'detach' | 'validate' };
+  | { action: 'attach' | 'detach' | 'validate' | 'ventilate' };
 
 /**
  * The expectation to store in a plan step: only the fields the step touches,
@@ -109,9 +112,10 @@ export function expectFor(op: Operation, step: StepShape): Expectation {
       return { validated: all.validated };
     case 'attach':
       return {};
-    // set and detach record whether the operation was validated: if an interrupted run
-    // leaves it open after reopening, a re-run knows to validate it again.
+    // set, detach and ventilate record whether the operation was validated: if an
+    // interrupted run leaves it open after reopening, a re-run knows to validate it again.
     case 'detach':
+    case 'ventilate':
       return { validated: all.validated };
     case 'set': {
       const e: Expectation = { category: all.category, validated: all.validated };
@@ -146,14 +150,32 @@ export function snapshot(op: Operation): Record<string, unknown> {
   return s;
 }
 
-/** Snapshot keys a step is expected to change. */
-export function expectedKeys(op: Operation, step: PlanStep): Set<string> {
+/** Snapshot keys a step is expected to change (`after`: the re-read state, for new lines). */
+export function expectedKeys(op: Operation, step: PlanStep, after?: Operation): Set<string> {
   switch (step.action) {
     case 'attach':
     case 'detach':
       return new Set(['attachments']);
     case 'validate':
       return new Set(['validated']);
+    case 'ventilate': {
+      // Its lines, new or reused, and the counterpart Dougs recomputes; validation
+      // also recomputes the counterpart.
+      const keys = new Set<string>(step.ventilate.validate ? ['validated'] : []);
+      for (const b of [...op.breakdowns, ...(after?.breakdowns ?? [])])
+        if (isVentilationBreakdown(b))
+          for (const f of [
+            'category',
+            'amount',
+            'amountExcludingVat',
+            'recoverableVat',
+            'vatRate',
+            'vatAmount',
+            'vatExemptReason',
+          ])
+            keys.add(`breakdown ${b.id} ${f}`);
+      return keys;
+    }
     case 'set': {
       const k = `breakdown ${targetBreakdown(op, step).id}`;
       const keys = new Set<string>();
@@ -204,9 +226,10 @@ function targetValues(
       return { validated: [true] };
     case 'attach':
       return {};
-    // validated is recorded for set/detach to restore it, never to detect drift:
-    // reopening is part of the step, and validating meanwhile is fine.
+    // validated is recorded for set/detach/ventilate to restore it, never to detect
+    // drift: reopening is part of the step, and validating meanwhile is fine.
     case 'detach':
+    case 'ventilate':
       return { validated: [true, false] };
     case 'set': {
       const s = step.set;
@@ -260,6 +283,8 @@ export function describeChanges(op: Operation, step: PlanStep): Change[] {
     }
     case 'validate':
       return [{ field: 'validated', from: op.validated, to: true }];
+    case 'ventilate':
+      return describeVentilation(op, step.ventilate);
     case 'set': {
       const b = targetBreakdown(op, step);
       const changes: Change[] = [];

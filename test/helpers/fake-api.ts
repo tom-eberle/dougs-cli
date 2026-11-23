@@ -3,8 +3,10 @@ import {
   type RawOpFixture,
   rawAccounts,
   rawCategories,
+  rawSalesChannels,
   rawUser,
   recoverage,
+  ventilationBreakdown,
 } from './fixtures.js';
 
 export interface RecordedRequest {
@@ -40,6 +42,8 @@ export class FakeDougs {
   session = 'synthetic-session-value';
   overrides: Handler[] = [];
   nextAttachmentId = 900_000;
+  nextBreakdownId = 800_000;
+  salesChannels: unknown[] = rawSalesChannels();
   /**
    * Password login. OBSERVED (web app code): endpoints, request bodies and the
    * authenticated / mfaRequired / ssoRequired statuses. ASSUMED: HTTP 401 for a
@@ -156,6 +160,9 @@ export class FakeDougs {
     }
     if (method === 'GET' && path === `${c}/accounts`) return Response.json(rawAccounts());
     if (method === 'GET' && path === `${c}/categories`) return Response.json(rawCategories());
+    if (method === 'GET' && path === `${c}/salesChannels`) return Response.json(this.salesChannels);
+    const sales = path.match(new RegExp(`^${c}/operations/(\\d+)/ecommerceSales(?:/(\\d+))?$`));
+    if (sales) return this.ecommerceSales(req, sales[1]!, sales[2]);
     if (method === 'GET' && path === `${c}/accounting-years`)
       return Response.json(this.accountingYears);
     if (method === 'GET' && path === `${c}/declarations/list-declarations`)
@@ -294,11 +301,117 @@ export class FakeDougs {
         )
           b.associations = [...(b.associations ?? []), { name: 'vatExemptionReason', slots: {} }];
       }
+      // OBSERVED: validating a ventilation recomputes its counterpart and amount to sales − fees.
+      if (next.type === DISPATCH && next.validated && !current.validated) {
+        const net = this.salesTotal(next) - total(next, 'ecommerceDispatch:fees');
+        next.amount = net;
+        for (const b of next.breakdowns) if (b.isCounterpart) b.amount = net;
+      }
       this.onUpdate?.(current, next);
       this.ops.set(one[1]!, next);
       return Response.json(next);
     }
     return notFound();
+  }
+
+  /**
+   * E-commerce ventilation lines. OBSERVED (web app traffic): create with amount 0, then
+   * update by breakdown id with the line sent back; the listing groups exempt service sales
+   * under subsection `exonerateSale`. OBSERVED: the counterpart follows the sales total, and
+   * commission updates change neither it nor the operation amount (validation does).
+   * ASSUMED: validated operations refuse these writes with 403, like other edits.
+   */
+  private ecommerceSales(req: RecordedRequest, opId: string, breakdownId?: string): Response {
+    const op = this.ops.get(opId);
+    if (!op) return notFound();
+    const lineOf = (b: RawOpFixture['breakdowns'][number]) => {
+      const fee = b.section === 'ecommerceDispatch:fees';
+      return {
+        saleId: fee ? 'fees' : b.associationData.vatExemptionReason,
+        label: fee ? 'Fictional Pay - ' : 'Exempt zone',
+        flag: fee ? 'payment' : 'eu',
+        amount: b.amount,
+        taxRate: 0,
+        vatAmount: 0,
+        breakdownId: b.id,
+        isRefund: false,
+        ...(fee ? { paymentsProcessorId: b.associationData.paymentsProcessorId } : {}),
+      };
+    };
+    const linesIn = (section: string) =>
+      op.breakdowns.filter((b) => !b.isCounterpart && b.section === section).map(lineOf);
+    if (req.method === 'GET' && !breakdownId)
+      return Response.json({
+        salesChannelName: 'Fictional App Store',
+        totalAmount: this.salesTotal(op),
+        totalVatAmount: 0,
+        sections: [
+          {
+            sectionId: 'service',
+            subSections: [
+              { sectionId: 'service', subSectionId: 'fr', sales: [] },
+              {
+                sectionId: 'service',
+                subSectionId: 'exonerateSale',
+                sales: linesIn('ecommerceDispatch:sales:service'),
+              },
+            ],
+          },
+          {
+            sectionId: 'fees',
+            subSections: [
+              { sectionId: 'fees', subSectionId: 'fees', sales: linesIn('ecommerceDispatch:fees') },
+            ],
+          },
+          {
+            sectionId: 'ecommerceExpenses',
+            subSections: [
+              { sectionId: 'ecommerceExpenses', subSectionId: 'ecommerceExpenses', sales: [] },
+            ],
+          },
+        ],
+      });
+    if (req.method !== 'POST') return notFound();
+    if (op.validated)
+      return Response.json({ message: 'Forbidden', statusCode: 403 }, { status: 403 });
+    const sale = (req.body as { ecommerceSale?: Record<string, unknown> }).ecommerceSale;
+    if (!sale) return Response.json({ message: 'Bad Request', statusCode: 400 }, { status: 400 });
+    let b: RawOpFixture['breakdowns'][number] | undefined;
+    if (!breakdownId) {
+      const id = this.nextBreakdownId++;
+      b =
+        sale.saleId === 'fees'
+          ? ventilationBreakdown(id, {
+              kind: 'fee',
+              processor: sale.paymentsProcessorId as number,
+              amount: 0,
+            })
+          : ventilationBreakdown(id, { kind: 'sale', saleId: String(sale.saleId), amount: 0 });
+      op.breakdowns.push(b);
+    } else {
+      b = op.breakdowns.find((x) => String(x.id) === breakdownId && !x.isCounterpart);
+      if (!b) return notFound();
+      b.amount = sale.amount as number;
+      b.amountExcludingTaxesWithRecoverageRate = b.amount;
+    }
+    if (b.section !== 'ecommerceDispatch:fees') {
+      let cp = op.breakdowns.find((x) => x.isCounterpart);
+      if (!cp) {
+        cp = ventilationBreakdown(this.nextBreakdownId++, { kind: 'counterpart', amount: 0 });
+        op.breakdowns.push(cp);
+      }
+      cp.amount = this.salesTotal(op);
+      cp.amountExcludingTaxesWithRecoverageRate = cp.amount;
+      op.amount = cp.amount;
+    }
+    return Response.json({
+      ...lineOf(b),
+      ...(breakdownId ? { totalAmount: this.salesTotal(op), totalVatAmount: 0 } : {}),
+    });
+  }
+
+  private salesTotal(op: RawOpFixture): number {
+    return total(op, 'ecommerceDispatch:sales:service');
   }
 
   private list(query: URLSearchParams): RawOpFixture[] {
@@ -316,6 +429,15 @@ export class FakeDougs {
       (r) => r.path.endsWith('/operations') && r.query.get('validated') === String(validated),
     ).length;
   }
+}
+
+const DISPATCH = 'dispatch:ecommerce:salesChannel';
+
+function total(op: RawOpFixture, section: string): number {
+  const sum = op.breakdowns
+    .filter((b) => !b.isCounterpart && b.section === section)
+    .reduce((s, b) => s + Math.round(b.amount * 100), 0);
+  return sum / 100;
 }
 
 function notFound(): Response {

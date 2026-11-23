@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `ventilate` plan steps fill an empty e-commerce ventilation (`dispatch:ecommerce:salesChannel`)
+  with exempt service sales (inside / outside the EU) and commissions by payment processor, check
+  `net` = sales − fees to the cent, optionally validate, and verify by re-reading. Interrupted
+  runs resume without duplicate lines.
+- Breakdowns expose `paymentsProcessorId` (e-commerce commission lines).
+
+### Changed
+- Validation no longer requires the lines of an e-commerce ventilation to add up to its amount
+  (Dougs only recomputes it on validation), nor a VAT exemption reason the user cannot edit.
+
 ## [0.1.1] — 2026-10-07
 
 ### Documentation
